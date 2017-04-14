@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package peer;
+
+message Header {
+  bytes sender = 1;
+  bytes destination = 2;
+
+  int64 session = 3;
+
+  enum Type {
+    PIPE_OPEN = 0;
+    PIPE_CLOSE = 1;
+    PIPE_DATA = 2;
+    PIPE_UNKNOWN = 3;
+    PIPE_OPENED = 4;
+  }
+
+  Type type = 4;
+
+  string pipe_name = 5;
+
+  bytes body = 6;
+}

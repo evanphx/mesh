@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package rpc;
+
+message PingRequest {
+  int64 sent_at = 1;
+}
+
+message Pong {
+  int64 sent_at = 1;
+}
+
+service PeerInfo {
+  rpc Ping(PingRequest) returns (Pong) {}
+}

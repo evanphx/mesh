@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package grpc;
+
+message Frame {
+  enum Type {
+    ERROR = 0;
+    REQUEST = 1;
+    REPLY = 2;
+  }
+
+  Type type = 1;
+  bytes body = 2;
+}
