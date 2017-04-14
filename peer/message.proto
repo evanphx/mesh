@@ -14,6 +14,8 @@ message Header {
     PIPE_DATA = 2;
     PIPE_UNKNOWN = 3;
     PIPE_OPENED = 4;
+    PING = 5;
+    PONG = 6;
   }
 
   Type type = 4;

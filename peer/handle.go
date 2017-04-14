@@ -2,9 +2,9 @@ package peer
 
 import (
 	"context"
-	"errors"
 
 	"github.com/evanphx/mesh/log"
+	"github.com/pkg/errors"
 )
 
 var (
@@ -23,8 +23,7 @@ func (p *Peer) handleMessage(ctx context.Context, buf []byte) error {
 	dest := Identity(hdr.Destination)
 
 	if !dest.Equal(p.Identity()) {
-		log.Printf("Only handling local messages atm. %s != %s", dest, p.Identity())
-		return ErrUnroutable
+		return p.forward(&hdr, buf)
 	}
 
 	log.Debugf("request: %s", hdr.Type)
@@ -43,4 +42,20 @@ func (p *Peer) handleMessage(ctx context.Context, buf []byte) error {
 	}
 
 	return nil
+}
+
+func (p *Peer) forward(hdr *Header, buf []byte) error {
+	dst := Identity(hdr.Destination)
+
+	hop, err := p.router.Lookup(dst.String())
+	if err != nil {
+		return err
+	}
+
+	neigh, ok := p.neighbors[hop.Neighbor]
+	if !ok {
+		return errors.Wrapf(ErrUnroutable, "unknown neighbor: %s", hop.Neighbor)
+	}
+
+	return neigh.tr.Send(buf)
 }

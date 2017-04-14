@@ -176,6 +176,17 @@ func (p *Peer) AddNeighbor(id Identity, tr ByteTransport) {
 	}
 }
 
+func (p *Peer) AddRoute(neigh, dest Identity) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	// Add a direct routing entry for the neighbor
+	p.router.Update(router.Update{
+		Neighbor:    neigh.String(),
+		Destination: dest.String(),
+	})
+}
+
 func (p *Peer) Identity() Identity {
 	return Identity(p.identityKey.Public)
 }
@@ -348,16 +359,6 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 }
 
 func (p *Peer) sendMessage(dst Identity, t Header_Type, s int64, body []byte) error {
-	hop, err := p.router.Lookup(dst.String())
-	if err != nil {
-		return err
-	}
-
-	neigh, ok := p.neighbors[hop.Neighbor]
-	if !ok {
-		return errors.Wrapf(ErrUnroutable, "unknown neighbor: %s", hop.Neighbor)
-	}
-
 	var hdr Header
 
 	hdr.Destination = dst
@@ -371,5 +372,5 @@ func (p *Peer) sendMessage(dst Identity, t Header_Type, s int64, body []byte) er
 		return err
 	}
 
-	return neigh.tr.Send(data)
+	return p.forward(&hdr, data)
 }
