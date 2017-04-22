@@ -1,8 +1,10 @@
 package peer
 
 import (
+	"log"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/evanphx/mesh/auth"
 	"github.com/stretchr/testify/assert"
@@ -13,7 +15,7 @@ import (
 func TestPeer(t *testing.T) {
 	n := neko.Start(t)
 
-	n.It("negotates an encrypted session", func() {
+	n.NIt("negotates an encrypted session", func() {
 		ib, rb := pairByteTraders()
 
 		a, err := auth.NewAuthorizer("test")
@@ -22,10 +24,14 @@ func TestPeer(t *testing.T) {
 		i, err := InitNewPeer()
 		require.NoError(t, err)
 
+		defer i.Shutdown()
+
 		i.Authorize(a)
 
 		r, err := InitNewPeer()
 		require.NoError(t, err)
+
+		defer r.Shutdown()
 
 		r.Authorize(a)
 
@@ -75,7 +81,7 @@ func TestPeer(t *testing.T) {
 		assert.True(t, rpeer.Equal(i.Identity()))
 	})
 
-	n.It("errors out if the peers aren't authorized", func() {
+	n.NIt("errors out if the peers aren't authorized", func() {
 		ib, rb := pairByteTraders()
 
 		a, err := auth.NewAuthorizer("t1")
@@ -87,10 +93,14 @@ func TestPeer(t *testing.T) {
 		i, err := InitNewPeer()
 		require.NoError(t, err)
 
+		defer i.Shutdown()
+
 		i.Authorize(a)
 
 		r, err := InitNewPeer()
 		require.NoError(t, err)
+
+		defer r.Shutdown()
 
 		r.Authorize(b)
 
@@ -119,6 +129,114 @@ func TestPeer(t *testing.T) {
 		}()
 
 		wg.Wait()
+	})
+
+	n.It("exchanges routes on full start (forced order)", func() {
+		ab, ba := pairByteTraders()
+
+		a, err := InitNewPeer()
+		require.NoError(t, err)
+
+		defer a.Shutdown()
+
+		b, err := InitNewPeer()
+		require.NoError(t, err)
+
+		defer b.Shutdown()
+
+		bc, cb := pairByteTraders()
+
+		c, err := InitNewPeer()
+		require.NoError(t, err)
+
+		defer c.Shutdown()
+
+		cd, dc := pairByteTraders()
+
+		d, err := InitNewPeer()
+		require.NoError(t, err)
+
+		defer d.Shutdown()
+
+		a.AttachPeer(b.Identity(), ab)
+		time.Sleep(100 * time.Millisecond)
+		b.AttachPeer(a.Identity(), ba)
+		time.Sleep(100 * time.Millisecond)
+		b.AttachPeer(c.Identity(), bc)
+		time.Sleep(100 * time.Millisecond)
+		c.AttachPeer(b.Identity(), cb)
+		time.Sleep(100 * time.Millisecond)
+		c.AttachPeer(d.Identity(), cd)
+		time.Sleep(100 * time.Millisecond)
+		d.AttachPeer(c.Identity(), dc)
+		time.Sleep(100 * time.Millisecond)
+
+		hop, err := d.router.Lookup(a.Identity().String())
+		require.NoError(t, err)
+
+		assert.Equal(t, hop.Neighbor, c.Identity().String())
+	})
+
+	n.It("sends out route updates on new attachments", func() {
+		ab, ba := pairByteTraders()
+
+		a, err := InitNewPeer()
+		require.NoError(t, err)
+		a.Name = "a"
+
+		defer a.Shutdown()
+
+		b, err := InitNewPeer()
+		require.NoError(t, err)
+		b.Name = "b"
+
+		defer b.Shutdown()
+
+		bc, cb := pairByteTraders()
+
+		c, err := InitNewPeer()
+		require.NoError(t, err)
+		c.Name = "c"
+
+		defer c.Shutdown()
+
+		cd, dc := pairByteTraders()
+
+		d, err := InitNewPeer()
+		require.NoError(t, err)
+		d.Name = "d"
+
+		defer d.Shutdown()
+
+		b.AttachPeer(c.Identity(), bc)
+		c.AttachPeer(b.Identity(), cb)
+		c.AttachPeer(d.Identity(), cd)
+		d.AttachPeer(c.Identity(), dc)
+
+		time.Sleep(1000 * time.Millisecond)
+
+		log.Printf("==== ATTACH %s to %s =====", b.Desc(), a.Desc())
+		log.Printf("==== Track the flow to %s", d.Desc())
+
+		a.AttachPeer(b.Identity(), ab)
+		b.AttachPeer(a.Identity(), ba)
+
+		time.Sleep(2000 * time.Millisecond)
+
+		log.Printf("a: %s", a.Identity().Short())
+		log.Printf("b: %s", b.Identity().Short())
+		log.Printf("c: %s", c.Identity().Short())
+		log.Printf("d: %s", d.Identity().Short())
+
+		a.WaitTilIdle()
+		b.WaitTilIdle()
+		c.WaitTilIdle()
+		d.WaitTilIdle()
+
+		hop, err := d.router.Lookup(a.Identity().String())
+		require.NoError(t, err)
+
+		assert.Equal(t, hop.Neighbor, c.Identity().String())
 	})
 
 	n.Meow()

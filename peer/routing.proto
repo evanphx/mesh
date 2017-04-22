@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package peer;
+
+message RouteRequest {
+  int64 since = 1;
+}
+
+message Route {
+  bytes destination = 1;
+  int32 weight = 2;
+}
+
+message RouteUpdate {
+  bytes neighbor = 1;
+  repeated Route routes = 2;
+}
+
+message NoResponse {}
+
+service Router {
+  rpc RoutesSince(RouteRequest) returns (RouteUpdate) {}
+  rpc NewRoute(RouteUpdate) returns (NoResponse) {}
+}

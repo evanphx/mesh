@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vektra/neko"
 )
@@ -18,48 +19,82 @@ func TestPeerRouting(t *testing.T) {
 		a, err := InitNewPeer()
 		require.NoError(t, err)
 
+		a.Name = "a"
+
+		defer a.Shutdown()
+
 		b, err := InitNewPeer()
 		require.NoError(t, err)
 
-		a.AddNeighbor(b.Identity(), ab)
-		b.AddNeighbor(a.Identity(), ba)
+		b.Name = "b"
+
+		defer b.Shutdown()
+
+		a.AttachPeer(b.Identity(), ab)
+		b.AttachPeer(a.Identity(), ba)
 
 		ac, ca := pairByteTraders()
 
 		c, err := InitNewPeer()
 		require.NoError(t, err)
 
-		a.AddNeighbor(c.Identity(), ac)
-		c.AddNeighbor(a.Identity(), ca)
+		c.Name = "c"
 
-		b.AddRoute(a.Identity(), c.Identity())
+		a.AttachPeer(c.Identity(), ac)
+		c.AttachPeer(a.Identity(), ca)
 
-		var req Header
-		req.Destination = c.Identity()
-		req.Sender = b.Identity()
-		req.Type = PING
-		req.Session = 1
+		b.WaitTilIdle()
+		a.WaitTilIdle()
+		c.WaitTilIdle()
 
-		data, err := req.Marshal()
-		require.NoError(t, err)
+		time.Sleep(100 * time.Millisecond)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		err = b.handleMessage(ctx, data)
+		dur, err := b.Ping(ctx, c.Identity())
 		require.NoError(t, err)
 
-		msg, err := ab.Recv(nil)
+		assert.True(t, dur > 0)
+	})
+
+	n.It("can get route updates from a peer", func() {
+		ab, ba := pairByteTraders()
+
+		a, err := InitNewPeer()
 		require.NoError(t, err)
 
-		err = a.handleMessage(ctx, msg)
+		defer a.Shutdown()
+
+		b, err := InitNewPeer()
 		require.NoError(t, err)
 
-		msg, err = ca.Recv(nil)
+		defer b.Shutdown()
+
+		a.AttachPeer(b.Identity(), ab)
+		b.AttachPeer(a.Identity(), ba)
+
+		ac, ca := pairByteTraders()
+
+		c, err := InitNewPeer()
 		require.NoError(t, err)
 
-		err = c.handleMessage(ctx, msg)
+		defer c.Shutdown()
+
+		a.AttachPeer(c.Identity(), ac)
+		c.AttachPeer(a.Identity(), ca)
+
+		time.Sleep(100 * time.Millisecond)
+
+		a.WaitTilIdle()
+		b.WaitTilIdle()
+		c.WaitTilIdle()
+
+		hop, err := b.router.Lookup(c.Identity().String())
 		require.NoError(t, err)
+
+		assert.Equal(t, hop.Neighbor, a.Identity().String())
+
 	})
 
 	n.Meow()

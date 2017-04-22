@@ -6,7 +6,7 @@ message Header {
   bytes sender = 1;
   bytes destination = 2;
 
-  int64 session = 3;
+  uint64 session = 3;
 
   enum Type {
     PIPE_OPEN = 0;
@@ -23,4 +23,6 @@ message Header {
   string pipe_name = 5;
 
   bytes body = 6;
+
+  bool encrypted = 7;
 }

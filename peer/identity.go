@@ -9,8 +9,14 @@ import (
 
 type Identity []byte
 
+var NilIdentity Identity
+
 func (i Identity) String() string {
 	return hex.EncodeToString(i)
+}
+
+func (i Identity) Short() string {
+	return i.String()[:7]
 }
 
 func (i Identity) Equal(j Identity) bool {
@@ -23,4 +29,13 @@ func (i Identity) ForKey(key noise.DHKey) bool {
 	}
 
 	return false
+}
+
+func ToIdentity(str string) Identity {
+	data, err := hex.DecodeString(str)
+	if err != nil {
+		panic(err)
+	}
+
+	return Identity(data)
 }

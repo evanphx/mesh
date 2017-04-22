@@ -10,5 +10,6 @@ message Frame {
   }
 
   Type type = 1;
-  bytes body = 2;
+  string method = 2;
+  bytes body = 3;
 }

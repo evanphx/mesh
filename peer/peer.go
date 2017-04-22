@@ -1,15 +1,20 @@
 package peer
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ed25519"
 
 	"github.com/evanphx/mesh/auth"
+	"github.com/evanphx/mesh/grpc"
 	"github.com/evanphx/mesh/router"
 	"github.com/flynn/noise"
 	"github.com/pkg/errors"
@@ -32,20 +37,47 @@ type Neighbor struct {
 
 const DefaultPipeBacklog = 10
 
+type pipeKey struct {
+	ep string
+	id uint64
+}
+
 type Peer struct {
+	Name        string
 	PipeBacklog int
 
 	identityKey noise.DHKey
 
 	networks map[string]*Network
 
-	lock      sync.Mutex
-	router    *router.Router
-	neighbors map[string]*Neighbor
-	listening map[string]*ListenPipe
-	pipes     map[int64]*Pipe
+	lock   sync.Mutex
+	router *router.Router
 
-	nextSession int64
+	pipeLock  sync.Mutex
+	listening map[string]*ListenPipe
+	pipes     map[pipeKey]*Pipe
+
+	neighLock sync.Mutex
+	neighbors map[string]*Neighbor
+
+	nextSession *uint64
+
+	rpcServer *grpc.Server
+
+	lifetime context.Context
+	shutdown func()
+	opChan   chan operation
+
+	pingLock sync.Mutex
+	pings    map[uint64]chan struct{}
+}
+
+func (p *Peer) Desc() string {
+	if p.Name == "" {
+		return p.Identity().Short()
+	}
+
+	return fmt.Sprintf("%s:%s", p.Name, p.Identity().Short())
 }
 
 func InitNewPeer() (*Peer, error) {
@@ -58,8 +90,14 @@ func InitNewPeer() (*Peer, error) {
 		neighbors:   make(map[string]*Neighbor),
 		networks:    make(map[string]*Network),
 		listening:   make(map[string]*ListenPipe),
-		pipes:       make(map[int64]*Pipe),
+		pipes:       make(map[pipeKey]*Pipe),
+		rpcServer:   grpc.NewServer(),
+		opChan:      make(chan operation),
+		pings:       make(map[uint64]chan struct{}),
+		nextSession: new(uint64),
 	}
+
+	peer.run()
 
 	return peer, nil
 }
@@ -100,7 +138,9 @@ func InitPeerFromDir(dir string) (*Peer, error) {
 		neighbors:   make(map[string]*Neighbor),
 		networks:    make(map[string]*Network),
 		listening:   make(map[string]*ListenPipe),
-		pipes:       make(map[int64]*Pipe),
+		pipes:       make(map[pipeKey]*Pipe),
+		rpcServer:   grpc.NewServer(),
+		opChan:      make(chan operation),
 	}
 
 	peer.identityKey.Public, err = hex.DecodeString(ps.IdentityKey.Public)
@@ -161,30 +201,18 @@ func (p *Peer) SaveToDir(dir string) error {
 }
 
 func (p *Peer) AddNeighbor(id Identity, tr ByteTransport) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	// Add a direct routing entry for the neighbor
-	p.router.Update(router.Update{
-		Neighbor:    id.String(),
-		Destination: id.String(),
-	})
-
-	p.neighbors[id.String()] = &Neighbor{
-		Id: id,
-		tr: tr,
-	}
+	p.opChan <- neighborAdd{id, tr}
 }
 
 func (p *Peer) AddRoute(neigh, dest Identity) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	// Add a direct routing entry for the neighbor
-	p.router.Update(router.Update{
-		Neighbor:    neigh.String(),
-		Destination: dest.String(),
+	var update RouteUpdate
+	update.Neighbor = neigh
+	update.Routes = append(update.Routes, &Route{
+		Destination: dest,
+		Weight:      1,
 	})
+
+	p.opChan <- routeUpdate{update: &update, prop: true}
 }
 
 func (p *Peer) Identity() Identity {
@@ -358,7 +386,7 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 	return sess, nil
 }
 
-func (p *Peer) sendMessage(dst Identity, t Header_Type, s int64, body []byte) error {
+func (p *Peer) sendMessage(dst Identity, t Header_Type, s uint64, body []byte) error {
 	var hdr Header
 
 	hdr.Destination = dst
@@ -373,4 +401,101 @@ func (p *Peer) sendMessage(dst Identity, t Header_Type, s int64, body []byte) er
 	}
 
 	return p.forward(&hdr, data)
+}
+
+func (p *Peer) send(hdr *Header) error {
+	hdr.Sender = p.identityKey.Public
+
+	data, err := hdr.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return p.forward(hdr, data)
+}
+
+func (p *Peer) run() {
+	p.lifetime, p.shutdown = context.WithCancel(context.Background())
+
+	go p.ListenForRPC(p.lifetime)
+	go p.handleOperations(p.lifetime)
+}
+
+func (p *Peer) Shutdown() {
+	p.shutdown()
+}
+
+func (p *Peer) AttachPeer(id Identity, tr ByteTransport) {
+	go p.Monitor(p.lifetime, tr)
+
+	p.AddNeighbor(id, tr)
+}
+
+func (p *Peer) Ping(ctx context.Context, id Identity) (time.Duration, error) {
+	sess := p.sessionId(id)
+
+	c := make(chan struct{})
+
+	p.pingLock.Lock()
+	p.pings[sess] = c
+	p.pingLock.Unlock()
+
+	var hdr Header
+
+	hdr.Sender = p.Identity()
+	hdr.Destination = id
+	hdr.Type = PING
+	hdr.Session = sess
+
+	sent := time.Now()
+
+	err := p.send(&hdr)
+	if err != nil {
+		return 0, err
+	}
+
+	var ret time.Duration
+
+	select {
+	case <-c:
+		ret = time.Since(sent)
+		err = nil
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+
+	p.pingLock.Lock()
+	delete(p.pings, sess)
+	p.pingLock.Unlock()
+
+	// Do a quick drain of c in case the ping came in after we
+	// timed out but before we got to the lock.
+	select {
+	case <-c:
+	default:
+	}
+
+	return ret, err
+}
+
+func (p *Peer) processPong(hdr *Header) {
+	log.Printf("%s process pong", p.Desc())
+
+	p.pingLock.Lock()
+
+	c, ok := p.pings[hdr.Session]
+
+	p.pingLock.Unlock()
+
+	if ok {
+		select {
+		case c <- struct{}{}:
+			// all good
+		default:
+			// omg super fast response
+			go func() {
+				c <- struct{}{}
+			}()
+		}
+	}
 }
