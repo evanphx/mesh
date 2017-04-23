@@ -57,6 +57,31 @@ func (n rpcError) OpType() string {
 	return "rpc-error"
 }
 
+type syncAdsOp struct {
+	update *AdvertisementUpdate
+	resp   chan *AdvertisementChanges
+}
+
+func (o syncAdsOp) OpType() string {
+	return "sync-ads"
+}
+
+type introduceAdver struct {
+	adver *Advertisement
+}
+
+func (o introduceAdver) OpType() string {
+	return "introduce-adver"
+}
+
+type inputAdvers struct {
+	advers []*Advertisement
+}
+
+func (o inputAdvers) OpType() string {
+	return "input-advers"
+}
+
 func (p *Peer) handleOperations(ctx context.Context) {
 	for {
 		select {
@@ -122,6 +147,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 
 		// Get the neighbors routes
 		go p.getRoutes(p.lifetime, op.id)
+		go p.getAllAds(p.lifetime, op.id)
 
 		var req RouteUpdate
 
@@ -191,6 +217,43 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		}
 
 		op.update <- &update
+	case introduceAdver:
+		update := &AdvertisementUpdate{}
+		update.NewAdvers = append(update.NewAdvers, op.adver)
+
+		p.adverLock.Lock()
+		p.allAdvers = append(p.allAdvers, op.adver)
+		p.adverLock.Unlock()
+
+		for _, neigh := range p.neighbors {
+			go p.syncAds(p.lifetime, neigh.Id, update)
+		}
+	case syncAdsOp:
+		p.adverLock.Lock()
+
+		log.Debugf("%s adding %d new advers", p.Desc(), len(op.update.NewAdvers))
+
+		var changes int32
+
+		for _, ad := range op.update.NewAdvers {
+			changes++
+			// key := ad.Key()
+			// p.advers[key] = append(p.advers[key], ad)
+			p.allAdvers = append(p.allAdvers, ad)
+		}
+
+		p.adverLock.Unlock()
+
+		if op.resp != nil {
+			op.resp <- &AdvertisementChanges{changes}
+		}
+
+	case inputAdvers:
+		p.adverLock.Lock()
+
+		p.allAdvers = append(p.allAdvers, op.advers...)
+
+		p.adverLock.Unlock()
 	case rpcError:
 		log.Debugf("%s rpc error detected on %s: %s", p.Desc(), Identity(op.peer).Short(), op.err)
 	default:

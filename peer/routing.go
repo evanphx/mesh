@@ -72,6 +72,7 @@ func (p *Peer) UpdateNeighbors(ctx context.Context, req *RouteUpdate, skip Ident
 func (p *Peer) ListenForRPC(ctx context.Context) error {
 	log.Debugf("%s listen for rpc", p.Desc())
 	RegisterRouterServer(p.rpcServer, p)
+	RegisterServicesServer(p.rpcServer, p)
 
 	lp, err := p.ListenPipe(":rpc")
 	if err != nil {

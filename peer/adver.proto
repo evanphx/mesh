@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+package peer;
+
+message Advertisement {
+  string id = 1;
+  bytes owner = 2 [(gogoproto.casttype) = "Identity"];
+  string pipe = 3;
+  map<string, string> tags = 4;
+  map<string, string> resources = 5;
+}
+
+message AdvertisementUpdate {
+  repeated Advertisement new_advers = 1;
+  repeated string remove_advers = 2;
+}
+
+message AdvertisementChanges {
+  int32 changes = 1;
+}
+
+message RetrieveAdverRequest {}
+
+message AdvertisementSet {
+  repeated Advertisement advers = 1;
+}
+
+service Services {
+  rpc SyncAdvertisements(AdvertisementUpdate) returns (AdvertisementChanges) {}
+  rpc RetrieveAdvertisements(RetrieveAdverRequest) returns (AdvertisementSet) {}
+}

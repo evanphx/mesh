@@ -70,6 +70,10 @@ type Peer struct {
 
 	pingLock sync.Mutex
 	pings    map[uint64]chan struct{}
+
+	adverLock sync.Mutex
+	allAdvers []*Advertisement
+	advers    map[string][]*Advertisement
 }
 
 func (p *Peer) Desc() string {
