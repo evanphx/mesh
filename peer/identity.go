@@ -15,6 +15,10 @@ func (i Identity) String() string {
 	return hex.EncodeToString(i)
 }
 
+func (i Identity) GoString() string {
+	return hex.EncodeToString(i)
+}
+
 func (i Identity) Short() string {
 	return i.String()[:7]
 }

@@ -48,8 +48,9 @@ type Pipe struct {
 }
 
 type ListenPipe struct {
-	name string
-	peer *Peer
+	name  string
+	peer  *Peer
+	adver *Advertisement
 
 	newPipes chan *Pipe
 
@@ -81,6 +82,10 @@ func (l *ListenPipe) Close() error {
 
 	delete(l.peer.listening, l.name)
 
+	if l.adver != nil {
+		l.peer.opChan <- removeAdver{l.adver}
+	}
+
 	l.err = ErrClosed
 	close(l.newPipes)
 
@@ -101,7 +106,53 @@ func (p *Peer) ListenPipe(name string) (*ListenPipe, error) {
 
 	log.Debugf("listen pipe created: %s", name)
 
+	if name[0] != ':' {
+		adver := &Advertisement{
+			Owner: p.Identity(),
+			Pipe:  name,
+		}
+
+		lp.adver = adver
+
+		err := p.Advertise(adver)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	return lp, nil
+}
+
+var ErrNoName = errors.New("no pipe name specified")
+
+func (p *Peer) Listen(adver *Advertisement) (*ListenPipe, error) {
+	p.pipeLock.Lock()
+	defer p.pipeLock.Unlock()
+
+	name := adver.Pipe
+
+	if name == "" {
+		return nil, ErrNoName
+	}
+
+	lp := &ListenPipe{
+		name:     name,
+		peer:     p,
+		adver:    adver,
+		newPipes: make(chan *Pipe, p.PipeBacklog),
+	}
+
+	p.listening[name] = lp
+
+	log.Debugf("listen pipe created: %s", name)
+
+	err := p.Advertise(adver)
+	if err != nil {
+		return nil, err
+	}
+
+	return lp, nil
+
 }
 
 func mkpipeKey(id Identity, ses uint64) pipeKey {
@@ -193,6 +244,15 @@ func (p *Peer) LazyConnectPipe(ctx context.Context, dst Identity, name string) (
 	p.pipes[mkpipeKey(dst, id)] = pipe
 
 	return pipe, nil
+}
+
+func (p *Peer) Connect(ctx context.Context, sel *PipeSelector) (*Pipe, error) {
+	peer, name, err := p.lookupSelector(sel)
+	if err != nil {
+		return nil, err
+	}
+
+	return p.ConnectPipe(ctx, peer, name)
 }
 
 var (

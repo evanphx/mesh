@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"crypto/rand"
 
 	"golang.org/x/crypto/ed25519"
@@ -35,10 +36,18 @@ func (a *Authorizer) PublicKey() []byte {
 	return a.publicKey
 }
 
-func (a *Authorizer) Sign(msg []byte) []byte {
-	return ed25519.Sign(a.privateKey, msg)
+func (a *Authorizer) Sign(msg []byte) ([]byte, []byte) {
+	return a.publicKey, ed25519.Sign(a.privateKey, msg)
 }
 
 func (a *Authorizer) Verify(msg, sig []byte) bool {
 	return ed25519.Verify(a.publicKey, msg, sig)
+}
+
+func (a *Authorizer) VerifySigner(signer, signature, msg []byte) bool {
+	if !bytes.Equal(a.publicKey, signer) {
+		return false
+	}
+
+	return ed25519.Verify(a.publicKey, msg, signature)
 }

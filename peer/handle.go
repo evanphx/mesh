@@ -12,14 +12,18 @@ var (
 	ErrUnroutable = errors.New("unroutable")
 )
 
-func (p *Peer) drive(ctx context.Context, tr ByteTransport) error {
+func (p *Peer) drive(ctx context.Context, neigh Identity, tr ByteTransport) error {
 	msg := make([]byte, 1024)
 	var err error
 
 	for {
 		msg, err = tr.Recv(msg)
 		if err != nil {
-			return err
+			if err == ErrClosed {
+				p.opChan <- neighborLeft{neigh}
+			}
+
+			return nil
 		}
 
 		err = p.handleMessage(ctx, msg)
@@ -29,8 +33,8 @@ func (p *Peer) drive(ctx context.Context, tr ByteTransport) error {
 	}
 }
 
-func (p *Peer) Monitor(ctx context.Context, tr ByteTransport) {
-	err := p.drive(ctx, tr)
+func (p *Peer) Monitor(ctx context.Context, id Identity, tr ByteTransport) {
+	err := p.drive(ctx, id, tr)
 	if err != nil {
 		log.Printf("Error monitoring transport: %s", err)
 	}
@@ -54,26 +58,6 @@ func (p *Peer) handleMessage(ctx context.Context, buf []byte) error {
 	p.opChan <- inputOperation{&hdr}
 
 	return nil
-
-	/*
-
-		log.Debugf("request: %s", hdr.Type)
-
-		switch hdr.Type {
-		case PIPE_OPEN:
-			p.newPipeRequest(&hdr)
-		case PIPE_OPENED:
-			p.setPipeOpened(&hdr)
-		case PIPE_DATA:
-			p.newPipeData(&hdr)
-		case PIPE_CLOSE:
-			p.setPipeClosed(&hdr)
-		case PIPE_UNKNOWN:
-			p.setPipeUnknown(&hdr)
-		}
-
-		return nil
-	*/
 }
 
 func (p *Peer) forward(hdr *Header, buf []byte) error {

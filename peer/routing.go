@@ -7,6 +7,15 @@ import (
 	"github.com/evanphx/mesh/log"
 )
 
+func (p *Peer) reachable(id Identity) bool {
+	_, err := p.router.Lookup(id.String())
+	if err != nil {
+		return false
+	}
+
+	return true
+}
+
 func (p *Peer) UpdateRoutes(ctx context.Context, neigh Identity) error {
 	var req RouteRequest
 
@@ -43,13 +52,6 @@ func (p *Peer) UpdateNeighbors(ctx context.Context, req *RouteUpdate, skip Ident
 		if neigh.Id.Equal(skip) {
 			continue
 		}
-
-		/*
-			log.Debugf("ROUTE %s updating neighbor %s",
-				p.Desc(),
-				Identity(neigh.Id).Short(),
-			)
-		*/
 
 		pipe, err := p.ConnectPipe(ctx, neigh.Id, ":rpc")
 		if err != nil {

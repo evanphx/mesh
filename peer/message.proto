@@ -1,10 +1,12 @@
 syntax = "proto3";
 
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
 package peer;
 
 message Header {
-  bytes sender = 1;
-  bytes destination = 2;
+  bytes sender = 1 [(gogoproto.casttype) = "Identity"];
+  bytes destination = 2 [(gogoproto.casttype) = "Identity"];
 
   uint64 session = 3;
 

@@ -71,9 +71,9 @@ type Peer struct {
 	pingLock sync.Mutex
 	pings    map[uint64]chan struct{}
 
-	adverLock sync.Mutex
-	allAdvers []*Advertisement
-	advers    map[string][]*Advertisement
+	adverLock  sync.Mutex
+	advers     map[string]*localAdver
+	selfAdvers map[string]*Advertisement
 }
 
 func (p *Peer) Desc() string {
@@ -99,6 +99,8 @@ func InitNewPeer() (*Peer, error) {
 		opChan:      make(chan operation),
 		pings:       make(map[uint64]chan struct{}),
 		nextSession: new(uint64),
+		advers:      make(map[string]*localAdver),
+		selfAdvers:  make(map[string]*Advertisement),
 	}
 
 	peer.run()
@@ -224,9 +226,10 @@ func (p *Peer) Identity() Identity {
 }
 
 func (p *Peer) Authorize(a *auth.Authorizer) error {
+	_, sig := a.Sign(p.identityKey.Public)
 	p.networks[a.Name()] = &Network{
 		authPub: a.PublicKey(),
-		cred:    a.Sign(p.identityKey.Public),
+		cred:    sig,
 	}
 	return nil
 }
@@ -430,7 +433,7 @@ func (p *Peer) Shutdown() {
 }
 
 func (p *Peer) AttachPeer(id Identity, tr ByteTransport) {
-	go p.Monitor(p.lifetime, tr)
+	go p.Monitor(p.lifetime, id, tr)
 
 	p.AddNeighbor(id, tr)
 }

@@ -59,6 +59,10 @@ func (r *Router) Lookup(dest string) (Hop, error) {
 		}
 	}
 
+	if found.Neighbor == "" {
+		return Hop{}, ErrNoRoute
+	}
+
 	return Hop{
 		Neighbor:    found.Neighbor,
 		Weight:      found.Weight,
@@ -110,4 +114,13 @@ func (r *Router) RoutesSince(offset int64) []Hop {
 	}
 
 	return hops
+}
+
+func (r *Router) PruneByHop(target string) {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+
+	for _, neighbors := range r.routes {
+		delete(neighbors, target)
+	}
 }

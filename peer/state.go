@@ -3,6 +3,7 @@ package peer
 import (
 	"context"
 	"runtime"
+	"time"
 
 	"github.com/evanphx/mesh/grpc"
 	"github.com/evanphx/mesh/log"
@@ -82,11 +83,32 @@ func (o inputAdvers) OpType() string {
 	return "input-advers"
 }
 
+type removeAdver struct {
+	adver *Advertisement
+}
+
+func (o removeAdver) OpType() string {
+	return "remove-adver"
+}
+
+type neighborLeft struct {
+	neigh Identity
+}
+
+func (o neighborLeft) OpType() string {
+	return "neighbor-left"
+}
+
 func (p *Peer) handleOperations(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
 	for {
 		select {
 		case op := <-p.opChan:
 			p.processOperation(ctx, op)
+		case <-ticker.C:
+			p.rebroadcastAdvers()
 		case <-ctx.Done():
 			return
 		}
@@ -165,6 +187,11 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			go p.sendNewRoute(p.lifetime, neigh.Id, &req)
 		}
 
+	case neighborLeft:
+		delete(p.neighbors, op.neigh.String())
+
+		p.router.PruneByHop(op.neigh.String())
+		// p.pruneNeighAdvers(op.neigh)
 	case routeUpdate:
 		for _, route := range op.update.Routes {
 			// Skip routes advertise for us, we know where we are
@@ -222,12 +249,34 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		update.NewAdvers = append(update.NewAdvers, op.adver)
 
 		p.adverLock.Lock()
-		p.allAdvers = append(p.allAdvers, op.adver)
+		p.selfAdvers[op.adver.Id] = op.adver
+
+		p.advers[op.adver.Id] = &localAdver{
+			adver: op.adver,
+		}
 		p.adverLock.Unlock()
+
+		p.neighLock.Lock()
 
 		for _, neigh := range p.neighbors {
 			go p.syncAds(p.lifetime, neigh.Id, update)
 		}
+
+		p.neighLock.Unlock()
+	case removeAdver:
+		update := &AdvertisementUpdate{}
+		update.RemoveAdvers = append(update.RemoveAdvers, op.adver.Id)
+
+		p.adverLock.Lock()
+		delete(p.selfAdvers, op.adver.Id)
+		delete(p.advers, op.adver.Id)
+		p.adverLock.Unlock()
+
+		p.neighLock.Lock()
+		for _, neigh := range p.neighbors {
+			go p.syncAds(p.lifetime, neigh.Id, update)
+		}
+		p.neighLock.Unlock()
 	case syncAdsOp:
 		p.adverLock.Lock()
 
@@ -237,9 +286,17 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 
 		for _, ad := range op.update.NewAdvers {
 			changes++
-			// key := ad.Key()
-			// p.advers[key] = append(p.advers[key], ad)
-			p.allAdvers = append(p.allAdvers, ad)
+
+			p.advers[ad.Id] = &localAdver{
+				expiresAt: ad.ExpiresAt(),
+				adver:     ad,
+			}
+		}
+
+		for _, id := range op.update.RemoveAdvers {
+			changes++
+
+			delete(p.advers, id)
 		}
 
 		p.adverLock.Unlock()
@@ -251,7 +308,12 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 	case inputAdvers:
 		p.adverLock.Lock()
 
-		p.allAdvers = append(p.allAdvers, op.advers...)
+		for _, ad := range op.advers {
+			p.advers[ad.Id] = &localAdver{
+				expiresAt: ad.ExpiresAt(),
+				adver:     ad,
+			}
+		}
 
 		p.adverLock.Unlock()
 	case rpcError:

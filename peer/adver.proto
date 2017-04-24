@@ -10,6 +10,10 @@ message Advertisement {
   string pipe = 3;
   map<string, string> tags = 4;
   map<string, string> resources = 5;
+  bytes config = 6;
+  int32 time_to_live = 7;
+  bytes signer = 8;
+  bytes signature = 9;
 }
 
 message AdvertisementUpdate {
