@@ -8,12 +8,13 @@ message Advertisement {
   string id = 1;
   bytes owner = 2 [(gogoproto.casttype) = "Identity"];
   string pipe = 3;
-  map<string, string> tags = 4;
-  map<string, string> resources = 5;
-  bytes config = 6;
-  int32 time_to_live = 7;
-  bytes signer = 8;
-  bytes signature = 9;
+  string subsystem = 4;
+  map<string, string> tags = 5;
+  map<string, string> resources = 6;
+  bytes config = 7;
+  int32 time_to_live = 8;
+  bytes signer = 9;
+  bytes signature = 10;
 }
 
 message AdvertisementUpdate {
