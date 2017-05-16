@@ -350,7 +350,7 @@ func (p *Peer) newPipeRequest(ctx context.Context, hdr *Header) {
 			if err != nil {
 				log.Printf("%s error decrypting responder handshake: %s", p.Desc(), err)
 
-				err := p.sendMessage(hdr.Sender, PIPE_UNKNOWN, hdr.Session, nil)
+				err := p.sendMessage(ctx, hdr.Sender, PIPE_UNKNOWN, hdr.Session, nil)
 				if err != nil {
 					log.Debugf("Error sending PIPE_UNKNOWN: %s", err)
 				}
@@ -498,7 +498,7 @@ func (p *Peer) setPipeClosed(ctx context.Context, hdr *Header) {
 	}
 }
 
-func (p *Pipe) Send(msg []byte) error {
+func (p *Pipe) Send(ctx context.Context, msg []byte) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -543,10 +543,10 @@ func (p *Pipe) Send(msg []byte) error {
 		hdr.Type = PIPE_DATA
 	}
 
-	return p.peer.send(&hdr)
+	return p.peer.send(ctx, &hdr)
 }
 
-func (p *Pipe) SendFinal(msg []byte) error {
+func (p *Pipe) SendFinal(ctx context.Context, msg []byte) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -586,7 +586,7 @@ func (p *Pipe) SendFinal(msg []byte) error {
 		p.hs = hs
 	}
 
-	return p.peer.send(&hdr)
+	return p.peer.send(ctx, &hdr)
 }
 
 func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {

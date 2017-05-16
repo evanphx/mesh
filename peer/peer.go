@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/ed25519"
 
+	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/auth"
 	"github.com/evanphx/mesh/grpc"
 	"github.com/evanphx/mesh/router"
