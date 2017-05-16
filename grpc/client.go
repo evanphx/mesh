@@ -8,9 +8,9 @@ type CallOption interface{}
 
 type Transport interface {
 	Recv(context.Context) ([]byte, error)
-	Send([]byte) error
-	SendFinal([]byte) error
-	Close() error
+	Send(context.Context, []byte) error
+	SendFinal(context.Context, []byte) error
+	Close(context.Context) error
 }
 
 type ClientConn struct {
@@ -24,7 +24,7 @@ func NewClientConn(tr Transport) *ClientConn {
 type ClientStream interface {
 	SendRequest(ctx context.Context, args interface{}) error
 	ReadReply(ctx context.Context, reply interface{}) error
-	Close() error
+	Close(ctx context.Context) error
 }
 
 func (cc *ClientConn) makeStream(ctx context.Context, method string) (ClientStream, error) {
@@ -54,5 +54,5 @@ func invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 		return err
 	}
 
-	return stream.Close()
+	return stream.Close(ctx)
 }

@@ -108,16 +108,18 @@ func (p *Peer) pruneNeighAdvers(neigh Identity) {
 func (p *Peer) getAllAds(ctx context.Context, neigh Identity) {
 	pipe, err := p.ConnectPipe(ctx, neigh, ":rpc")
 	if err != nil {
-		p.opChan <- rpcError{neigh, err}
+		p.opChan <- rpcError{"ConnectPipe", neigh, err}
+		return
 	}
 
-	defer pipe.Close()
+	defer pipe.Close(ctx)
 
 	client := NewServicesClient(grpc.NewClientConn(pipe))
 
 	set, err := client.RetrieveAdvertisements(ctx, &RetrieveAdverRequest{})
 	if err != nil {
-		p.opChan <- rpcError{neigh, err}
+		p.opChan <- rpcError{"client.RetrieveAdvertisements", neigh, err}
+		return
 	}
 
 	p.opChan <- inputAdvers{set.Advers}
@@ -126,16 +128,17 @@ func (p *Peer) getAllAds(ctx context.Context, neigh Identity) {
 func (p *Peer) syncAds(ctx context.Context, neigh Identity, update *AdvertisementUpdate) {
 	pipe, err := p.ConnectPipe(ctx, neigh, ":rpc")
 	if err != nil {
-		p.opChan <- rpcError{neigh, err}
+		p.opChan <- rpcError{"ConnectPipe", neigh, err}
 	}
 
-	defer pipe.Close()
+	defer pipe.Close(ctx)
 
 	client := NewServicesClient(grpc.NewClientConn(pipe))
 
 	_, err = client.SyncAdvertisements(ctx, update)
 	if err != nil {
-		p.opChan <- rpcError{neigh, err}
+		p.opChan <- rpcError{"client.SyncAdvertisements", neigh, err}
+		return
 	}
 }
 

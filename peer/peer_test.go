@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"context"
 	"log"
 	"sync"
 	"testing"
@@ -110,7 +111,7 @@ func TestPeer(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			defer ib.Close()
+			defer ib.Close(context.TODO())
 
 			var err error
 
@@ -120,7 +121,7 @@ func TestPeer(t *testing.T) {
 
 		go func() {
 			defer wg.Done()
-			defer rb.Close()
+			defer rb.Close(context.TODO())
 
 			var err error
 

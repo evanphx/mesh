@@ -239,15 +239,15 @@ func (n *Network) validateCred(key, rcred []byte) bool {
 }
 
 type ByteTransport interface {
-	Send([]byte) error
-	Recv([]byte) ([]byte, error)
+	Send(context.Context, []byte) error
+	Recv(context.Context, []byte) ([]byte, error)
 }
 
 type Session interface {
 	PeerIdentity() Identity
 
-	Send(msg []byte) error
-	Recv(out []byte) ([]byte, error)
+	Send(ctx context.Context, msg []byte) error
+	Recv(ctx context.Context, out []byte) ([]byte, error)
 
 	Encrypt(msg, out []byte) []byte
 	Decrypt(msg, out []byte) ([]byte, error)
@@ -274,12 +274,12 @@ func (n *noiseSession) Decrypt(msg, out []byte) ([]byte, error) {
 	return n.readCS.Decrypt(out, nil, msg)
 }
 
-func (n *noiseSession) Send(msg []byte) error {
-	return n.tr.Send(n.writeCS.Encrypt(nil, nil, msg))
+func (n *noiseSession) Send(ctx context.Context, msg []byte) error {
+	return n.tr.Send(ctx, n.writeCS.Encrypt(nil, nil, msg))
 }
 
-func (n *noiseSession) Recv(out []byte) ([]byte, error) {
-	buf, err := n.tr.Recv(out)
+func (n *noiseSession) Recv(ctx context.Context, out []byte) ([]byte, error) {
+	buf, err := n.tr.Recv(ctx, out)
 	if err != nil {
 		return nil, err
 	}
@@ -304,12 +304,12 @@ func (p *Peer) BeginHandshake(netName string, tr ByteTransport) (Session, error)
 
 	msg, _, _ := hs.WriteMessage(nil, []byte(netName))
 
-	err := tr.Send(msg)
+	err := tr.Send(context.TODO(), msg)
 	if err != nil {
 		return nil, err
 	}
 
-	buf, err := tr.Recv(make([]byte, 256))
+	buf, err := tr.Recv(context.TODO(), make([]byte, 256))
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +321,7 @@ func (p *Peer) BeginHandshake(netName string, tr ByteTransport) (Session, error)
 
 	msg, csR, csW := hs.WriteMessage(nil, net.cred)
 
-	err = tr.Send(msg)
+	err = tr.Send(context.TODO(), msg)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +348,7 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 		Prologue:      Prologue,
 	})
 
-	buf, err := tr.Recv(make([]byte, 256))
+	buf, err := tr.Recv(context.TODO(), make([]byte, 256))
 	if err != nil {
 		return nil, err
 	}
@@ -365,12 +365,12 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 
 	msg, _, _ := hs.WriteMessage(nil, net.cred)
 
-	err = tr.Send(msg)
+	err = tr.Send(context.TODO(), msg)
 	if err != nil {
 		return nil, err
 	}
 
-	buf, err = tr.Recv(buf)
+	buf, err = tr.Recv(context.TODO(), buf)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +393,7 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 	return sess, nil
 }
 
-func (p *Peer) sendMessage(dst Identity, t Header_Type, s uint64, body []byte) error {
+func (p *Peer) sendMessage(ctx context.Context, dst Identity, t Header_Type, s uint64, body []byte) error {
 	var hdr Header
 
 	hdr.Destination = dst
@@ -407,10 +407,10 @@ func (p *Peer) sendMessage(dst Identity, t Header_Type, s uint64, body []byte) e
 		return err
 	}
 
-	return p.forward(&hdr, data)
+	return p.forward(ctx, &hdr, data)
 }
 
-func (p *Peer) send(hdr *Header) error {
+func (p *Peer) send(ctx context.Context, hdr *Header) error {
 	hdr.Sender = p.identityKey.Public
 
 	data, err := hdr.Marshal()
@@ -418,7 +418,7 @@ func (p *Peer) send(hdr *Header) error {
 		return err
 	}
 
-	return p.forward(hdr, data)
+	return p.forward(ctx, hdr, data)
 }
 
 func (p *Peer) run() {
@@ -456,7 +456,7 @@ func (p *Peer) Ping(ctx context.Context, id Identity) (time.Duration, error) {
 
 	sent := time.Now()
 
-	err := p.send(&hdr)
+	err := p.send(ctx, &hdr)
 	if err != nil {
 		return 0, err
 	}

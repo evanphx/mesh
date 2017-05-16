@@ -16,7 +16,7 @@ type Stream interface {
 	SendError(ctx context.Context, err error) error
 	SendReply(ctx context.Context, v interface{}) error
 
-	Close() error
+	Close(ctx context.Context) error
 }
 
 type VariableByteTransport interface {
@@ -138,7 +138,7 @@ func (s *serverStream) SendError(ctx context.Context, err error) error {
 		return err
 	}
 
-	return s.tr.SendFinal(data)
+	return s.tr.SendFinal(ctx, data)
 }
 
 func (s *serverStream) SendReply(ctx context.Context, v interface{}) error {
@@ -162,15 +162,15 @@ func (s *serverStream) SendReply(ctx context.Context, v interface{}) error {
 		return err
 	}
 
-	return s.tr.SendFinal(data)
+	return s.tr.SendFinal(ctx, data)
 }
 
 func (s *serverStream) Method() string {
 	return s.frame.Method
 }
 
-func (s *serverStream) Close() error {
-	return s.tr.Close()
+func (s *serverStream) Close(ctx context.Context) error {
+	return s.tr.Close(ctx)
 }
 
 type clientStream struct {
@@ -200,7 +200,7 @@ func (s *clientStream) SendRequest(ctx context.Context, args interface{}) error 
 		return err
 	}
 
-	return s.tr.Send(data)
+	return s.tr.Send(ctx, data)
 }
 
 func (s *clientStream) ReadReply(ctx context.Context, reply interface{}) error {
@@ -232,6 +232,6 @@ func (s *clientStream) ReadReply(ctx context.Context, reply interface{}) error {
 	return u.Unmarshal(frame.Body)
 }
 
-func (s *clientStream) Close() error {
-	return s.tr.Close()
+func (s *clientStream) Close(ctx context.Context) error {
+	return s.tr.Close(ctx)
 }

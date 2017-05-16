@@ -26,7 +26,7 @@ func (p *Peer) UpdateRoutes(ctx context.Context, neigh Identity) error {
 		return err
 	}
 
-	defer pipe.Close()
+	defer pipe.Close(ctx)
 
 	client := NewRouterClient(grpc.NewClientConn(pipe))
 
@@ -62,7 +62,7 @@ func (p *Peer) UpdateNeighbors(ctx context.Context, req *RouteUpdate, skip Ident
 
 		_, err = client.NewRoute(ctx, req)
 
-		pipe.Close()
+		pipe.Close(ctx)
 		if err != nil {
 			return err
 		}

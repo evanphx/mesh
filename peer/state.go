@@ -50,6 +50,7 @@ type operation interface {
 }
 
 type rpcError struct {
+	loc  string
 	peer Identity
 	err  error
 }
@@ -130,15 +131,15 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 
 		switch hdr.Type {
 		case PIPE_OPEN:
-			p.newPipeRequest(hdr)
+			p.newPipeRequest(ctx, hdr)
 		case PIPE_OPENED:
-			p.setPipeOpened(hdr)
+			p.setPipeOpened(ctx, hdr)
 		case PIPE_DATA:
-			p.newPipeData(hdr)
+			p.newPipeData(ctx, hdr)
 		case PIPE_CLOSE:
-			p.setPipeClosed(hdr)
+			p.setPipeClosed(ctx, hdr)
 		case PIPE_UNKNOWN:
-			p.setPipeUnknown(hdr)
+			p.setPipeUnknown(ctx, hdr)
 		case PING:
 			var out Header
 			out.Sender = p.Identity()
@@ -146,7 +147,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			out.Type = PONG
 			out.Session = hdr.Session
 
-			go p.send(&out)
+			go p.send(ctx, &out)
 		case PONG:
 			p.processPong(hdr)
 		default:
@@ -317,7 +318,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 
 		p.adverLock.Unlock()
 	case rpcError:
-		log.Debugf("%s rpc error detected on %s: %s", p.Desc(), Identity(op.peer).Short(), op.err)
+		log.Debugf("%s rpc error detected on %s: %s: %s", p.Desc(), Identity(op.peer).Short(), op.loc, op.err)
 	default:
 		log.Debugf("Unknown operation: %T", val)
 	}
@@ -330,16 +331,16 @@ func (p *Peer) getRoutes(ctx context.Context, id Identity) {
 
 	pipe, err := p.LazyConnectPipe(ctx, id, ":rpc")
 	if err != nil {
-		p.opChan <- rpcError{id, err}
+		p.opChan <- rpcError{"LazyConnectPipe", id, err}
 	}
 
-	defer pipe.Close()
+	defer pipe.Close(ctx)
 
 	client := NewRouterClient(grpc.NewClientConn(pipe))
 
 	update, err := client.RoutesSince(ctx, &req)
 	if err != nil {
-		p.opChan <- rpcError{id, err}
+		p.opChan <- rpcError{"client.RoutesSince", id, err}
 		return
 	}
 
@@ -353,19 +354,19 @@ func (p *Peer) sendNewRoute(ctx context.Context, id Identity, req *RouteUpdate) 
 
 	pipe, err := p.LazyConnectPipe(ctx, id, ":rpc")
 	if err != nil {
-		p.opChan <- rpcError{id, err}
+		p.opChan <- rpcError{"LazyConnectPipe", id, err}
 		return
 	}
 
 	log.Debugf("%s rpc pipe opened to %s", p.Desc(), id.Short())
 
-	defer pipe.Close()
+	defer pipe.Close(ctx)
 
 	client := NewRouterClient(grpc.NewClientConn(pipe))
 
 	_, err = client.NewRoute(ctx, req)
 	if err != nil {
-		p.opChan <- rpcError{id, err}
+		p.opChan <- rpcError{"client.NewRoute", id, err}
 		return
 	}
 }

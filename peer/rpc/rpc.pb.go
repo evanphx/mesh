@@ -25,8 +25,8 @@ import strconv "strconv"
 import reflect "reflect"
 
 import (
+	context "context"
 	grpc "github.com/evanphx/mesh/grpc"
-	context "golang.org/x/net/context"
 )
 
 import io "io"

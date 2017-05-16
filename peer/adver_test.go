@@ -1,6 +1,7 @@
 package peer
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -222,7 +223,7 @@ func TestPeerAdver(t *testing.T) {
 
 		time.Sleep(100 * time.Millisecond)
 
-		rb.Close()
+		rb.Close(context.TODO())
 
 		time.Sleep(100 * time.Millisecond)
 

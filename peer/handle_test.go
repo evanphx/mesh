@@ -61,10 +61,10 @@ func TestPeerHandle(t *testing.T) {
 		assert.Equal(t, req.Session, rp.session)
 
 		// rpc request, discard
-		_, err = rb.Recv(nil)
+		_, err = rb.Recv(ctx, nil)
 		require.NoError(t, err)
 
-		nxt, err := rb.Recv(nil)
+		nxt, err := rb.Recv(ctx, nil)
 		require.NoError(t, err)
 
 		var resp Header
@@ -142,7 +142,7 @@ func TestPeerHandle(t *testing.T) {
 
 		require.NoError(t, pipeErr)
 
-		err = pipe.Send([]byte("hello"))
+		err = pipe.Send(ctx, []byte("hello"))
 		require.NoError(t, err)
 
 		msg, err := l.Recv(ctx)
@@ -225,7 +225,7 @@ func TestPeerHandle(t *testing.T) {
 
 		require.NoError(t, pipeErr)
 
-		err = pipe.Close()
+		err = pipe.Close(ctx)
 		require.NoError(t, err)
 
 		_, err = l.Recv(ctx)
@@ -279,7 +279,7 @@ func TestPeerHandle(t *testing.T) {
 
 		require.NoError(t, pipeErr)
 
-		err = l.Close()
+		err = l.Close(ctx)
 		require.NoError(t, err)
 
 		_, err = pipe.Recv(ctx)

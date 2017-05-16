@@ -203,7 +203,7 @@ func (p *Peer) ConnectPipe(ctx context.Context, dst Identity, name string) (*Pip
 
 	log.Debugf("%s opening sync encrypted pipe", p.Desc())
 
-	err := p.send(&hdr)
+	err := p.send(ctx, &hdr)
 	if err != nil {
 		return nil, err
 	}
@@ -260,7 +260,7 @@ var (
 	ErrClosed      = errors.New("closed pipe")
 )
 
-func (p *Peer) setPipeOpened(hdr *Header) {
+func (p *Peer) setPipeOpened(ctx context.Context, hdr *Header) {
 	p.pipeLock.Lock()
 	defer p.pipeLock.Unlock()
 
@@ -292,7 +292,7 @@ func (p *Peer) setPipeOpened(hdr *Header) {
 	}
 }
 
-func (p *Peer) setPipeUnknown(hdr *Header) {
+func (p *Peer) setPipeUnknown(ctx context.Context, hdr *Header) {
 	p.pipeLock.Lock()
 	defer p.pipeLock.Unlock()
 
@@ -314,7 +314,7 @@ func (p *Peer) setPipeUnknown(hdr *Header) {
 	}
 }
 
-func (p *Peer) newPipeRequest(hdr *Header) {
+func (p *Peer) newPipeRequest(ctx context.Context, hdr *Header) {
 	p.pipeLock.Lock()
 	defer p.pipeLock.Unlock()
 
@@ -396,21 +396,21 @@ func (p *Peer) newPipeRequest(hdr *Header) {
 				p.Desc(), Identity(hdr.Sender).Short(), hdr.Session)
 		}
 
-		err := p.send(&ret)
+		err := p.send(ctx, &ret)
 		if err != nil {
 			log.Debugf("Error sending PIPE_OPENED: %s", err)
 		}
 	} else {
 		log.Debugf("%s unknown pipe requested: %s", p.Identity(), hdr.PipeName)
 
-		err := p.sendMessage(hdr.Sender, PIPE_UNKNOWN, hdr.Session, nil)
+		err := p.sendMessage(ctx, hdr.Sender, PIPE_UNKNOWN, hdr.Session, nil)
 		if err != nil {
 			log.Debugf("Error sending PIPE_UNKNOWN: %s", err)
 		}
 	}
 }
 
-func (p *Peer) newPipeData(hdr *Header) {
+func (p *Peer) newPipeData(ctx context.Context, hdr *Header) {
 	p.pipeLock.Lock()
 	defer p.pipeLock.Unlock()
 
@@ -420,7 +420,7 @@ func (p *Peer) newPipeData(hdr *Header) {
 
 		if pipe.closed {
 			log.Debugf("injected data to closed pipe: %d", hdr.Session)
-			p.sendMessage(hdr.Sender, PIPE_CLOSE, hdr.Session, nil)
+			p.sendMessage(ctx, hdr.Sender, PIPE_CLOSE, hdr.Session, nil)
 		} else {
 			log.Debugf("inject pipe data: %s", hdr.Session)
 
@@ -440,11 +440,11 @@ func (p *Peer) newPipeData(hdr *Header) {
 		}
 	} else {
 		log.Debugf("unknown pipe: %d", hdr.Session)
-		p.sendMessage(hdr.Sender, PIPE_UNKNOWN, hdr.Session, nil)
+		p.sendMessage(ctx, hdr.Sender, PIPE_UNKNOWN, hdr.Session, nil)
 	}
 }
 
-func (p *Peer) setPipeClosed(hdr *Header) {
+func (p *Peer) setPipeClosed(ctx context.Context, hdr *Header) {
 	p.pipeLock.Lock()
 	defer p.pipeLock.Unlock()
 
@@ -602,7 +602,7 @@ func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 	}
 }
 
-func (p *Pipe) Close() error {
+func (p *Pipe) Close(ctx context.Context) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -621,5 +621,5 @@ func (p *Pipe) Close() error {
 	p.err = ErrClosed
 	p.closed = true
 
-	return p.peer.sendMessage(p.other, PIPE_CLOSE, p.session, nil)
+	return p.peer.sendMessage(ctx, p.other, PIPE_CLOSE, p.session, nil)
 }

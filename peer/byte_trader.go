@@ -1,5 +1,7 @@
 package peer
 
+import "context"
+
 type byteTrader struct {
 	r chan []byte
 	w chan []byte
@@ -12,12 +14,12 @@ func pairByteTraders() (*byteTrader, *byteTrader) {
 	return &byteTrader{i, r}, &byteTrader{r, i}
 }
 
-func (b *byteTrader) Send(msg []byte) error {
+func (b *byteTrader) Send(_ context.Context, msg []byte) error {
 	b.w <- msg
 	return nil
 }
 
-func (b *byteTrader) Recv(msg []byte) ([]byte, error) {
+func (b *byteTrader) Recv(_ context.Context, msg []byte) ([]byte, error) {
 	m, ok := <-b.r
 	if !ok {
 		return nil, ErrClosed
@@ -26,7 +28,7 @@ func (b *byteTrader) Recv(msg []byte) ([]byte, error) {
 	return m, nil
 }
 
-func (b *byteTrader) Close() error {
+func (b *byteTrader) Close(_ context.Context) error {
 	if b.w != nil {
 		close(b.w)
 		b.w = nil

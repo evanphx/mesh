@@ -17,7 +17,7 @@ func (p *Peer) drive(ctx context.Context, neigh Identity, tr ByteTransport) erro
 	var err error
 
 	for {
-		msg, err = tr.Recv(msg)
+		msg, err = tr.Recv(ctx, msg)
 		if err != nil {
 			if err == ErrClosed {
 				p.opChan <- neighborLeft{neigh}
@@ -52,15 +52,20 @@ func (p *Peer) handleMessage(ctx context.Context, buf []byte) error {
 
 	if !dest.Equal(p.Identity()) {
 		log.Debugf("%s forward to %s", p.Desc(), dest.Short())
-		return p.forward(&hdr, buf)
+		return p.forward(ctx, &hdr, buf)
 	}
 
-	p.opChan <- inputOperation{&hdr}
+	select {
+	case p.opChan <- inputOperation{&hdr}:
+		// ok
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	return nil
 }
 
-func (p *Peer) forward(hdr *Header, buf []byte) error {
+func (p *Peer) forward(ctx context.Context, hdr *Header, buf []byte) error {
 	var err error
 
 	if buf == nil {
@@ -82,5 +87,5 @@ func (p *Peer) forward(hdr *Header, buf []byte) error {
 		return errors.Wrapf(ErrUnroutable, "unknown neighbor: %s", hop.Neighbor)
 	}
 
-	return neigh.tr.Send(buf)
+	return neigh.tr.Send(ctx, buf)
 }
