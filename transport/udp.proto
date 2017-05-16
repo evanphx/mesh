@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package transport;
+
+enum UDPType {
+  HS1 = 0;
+  HS2 = 1;
+  HS3 = 2;
+  DATA = 3;
+}
+
+message UDPHeader {
+  UDPType type = 1;
+  uint64 nonce = 2;
+  bytes data = 3;
+}

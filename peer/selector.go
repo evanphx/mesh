@@ -6,8 +6,9 @@ import (
 )
 
 type PipeSelector struct {
-	Pipe string
-	Tags map[string]string
+	Pipe      string
+	Subsystem string
+	Tags      map[string]string
 }
 
 var ErrNoMatch = errors.New("no matching advertisements")
@@ -43,25 +44,30 @@ func (p *Peer) lookupSelector(sel *PipeSelector) (Identity, string, error) {
 }
 
 func (a *Advertisement) matchSelector(sel *PipeSelector) bool {
-	if sel.Pipe != "" {
+	switch {
+	case sel.Pipe != "":
 		if a.Pipe != sel.Pipe {
 			return false
 		}
-
-		if sel.Tags != nil {
-			if a.Tags == nil {
-				return false
-			}
-
-			for k, v := range sel.Tags {
-				if a.Tags[k] != v {
-					return false
-				}
-			}
+	case sel.Subsystem != "":
+		if a.Subsystem != sel.Subsystem {
+			return false
 		}
-
-		return true
+	default:
+		return false
 	}
 
-	return false
+	if sel.Tags != nil {
+		if a.Tags == nil {
+			return false
+		}
+
+		for k, v := range sel.Tags {
+			if a.Tags[k] != v {
+				return false
+			}
+		}
+	}
+
+	return true
 }

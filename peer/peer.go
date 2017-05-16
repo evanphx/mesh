@@ -50,8 +50,9 @@ type Peer struct {
 
 	networks map[string]*Network
 
-	lock   sync.Mutex
-	router *router.Router
+	lock        sync.Mutex
+	router      *router.Router
+	connections *Connections
 
 	pipeLock  sync.Mutex
 	listening map[string]*ListenPipe
@@ -101,6 +102,7 @@ func InitNewPeer() (*Peer, error) {
 		nextSession: new(uint64),
 		advers:      make(map[string]*localAdver),
 		selfAdvers:  make(map[string]*Advertisement),
+		connections: DefaultConnections,
 	}
 
 	peer.run()
@@ -147,6 +149,7 @@ func InitPeerFromDir(dir string) (*Peer, error) {
 		pipes:       make(map[pipeKey]*Pipe),
 		rpcServer:   grpc.NewServer(),
 		opChan:      make(chan operation),
+		connections: DefaultConnections,
 	}
 
 	peer.identityKey.Public, err = hex.DecodeString(ps.IdentityKey.Public)
@@ -210,6 +213,10 @@ func (p *Peer) AddNeighbor(id Identity, tr ByteTransport) {
 	p.opChan <- neighborAdd{id, tr}
 }
 
+func (p *Peer) AddSession(sess mesh.Session) {
+	p.opChan <- neighborAdd{Identity(sess.PeerIdentity()), sess}
+}
+
 func (p *Peer) AddRoute(neigh, dest Identity) {
 	var update RouteUpdate
 	update.Neighbor = neigh
@@ -225,6 +232,10 @@ func (p *Peer) Identity() Identity {
 	return Identity(p.identityKey.Public)
 }
 
+func (p *Peer) StaticKey() noise.DHKey {
+	return p.identityKey
+}
+
 func (p *Peer) Authorize(a *auth.Authorizer) error {
 	_, sig := a.Sign(p.identityKey.Public)
 	p.networks[a.Name()] = &Network{
@@ -236,6 +247,30 @@ func (p *Peer) Authorize(a *auth.Authorizer) error {
 
 func (n *Network) validateCred(key, rcred []byte) bool {
 	return ed25519.Verify(n.authPub, key, rcred)
+}
+
+func (p *Peer) CredsFor(bnet string) []byte {
+	net, ok := p.networks[bnet]
+	if !ok {
+		return nil
+	}
+
+	return net.cred
+}
+
+func (p *Peer) Validate(bnet string, key, rcred []byte) bool {
+	net, ok := p.networks[bnet]
+	if !ok {
+		// If we don't have this network and the remote side presented
+		// no creds, assume this is an anonymous network
+		if len(rcred) == 0 {
+			return true
+		}
+
+		return false
+	}
+
+	return ed25519.Verify(net.authPub, key, rcred)
 }
 
 type ByteTransport interface {
