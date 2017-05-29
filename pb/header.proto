@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+package pb;
+
+message Header {
+  bytes sender = 1 [(gogoproto.casttype) = "github.com/evanphx/mesh.Identity"];
+  bytes destination = 2 [(gogoproto.casttype) = "github.com/evanphx/mesh.Identity"];
+
+  int32 proto = 3;
+  bytes body = 4;
+}

@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+package pb;
+
+message Advertisement {
+  string id = 1;
+  bytes owner = 2 [(gogoproto.casttype) = "github.com/evanphx/mesh.Identity"];
+  string pipe = 3;
+  string subsystem = 4;
+  map<string, string> tags = 5;
+  map<string, string> resources = 6;
+  bytes config = 7;
+  int32 time_to_live = 8;
+  bytes signer = 9;
+  bytes signature = 10;
+}
+
+message AdvertisementUpdate {
+  repeated Advertisement new_advers = 1;
+  repeated string remove_advers = 2;
+}
+
+message AdvertisementChanges {
+  int32 changes = 1;
+}
+
+message RetrieveAdverRequest {}
+
+message AdvertisementSet {
+  repeated Advertisement advers = 1;
+}
+
+service Services {
+  rpc SyncAdvertisements(AdvertisementUpdate) returns (AdvertisementChanges) {}
+  rpc RetrieveAdvertisements(RetrieveAdverRequest) returns (AdvertisementSet) {}
+}

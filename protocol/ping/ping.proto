@@ -1,0 +1,9 @@
+syntax = "proto3";
+
+package ping;
+
+message Message {
+  uint64 session = 1;
+  bool reply = 2;
+}
+
