@@ -18,6 +18,7 @@ import (
 
 type Resolver interface {
 	LookupSelector(*mesh.PipeSelector) (mesh.Identity, string, error)
+	RemoveAdvertisement(*pb.Advertisement)
 }
 
 type pipeKey struct {
@@ -83,6 +84,8 @@ func (d *DataHandler) Handle(ctx context.Context, hdr *pb.Header) error {
 		d.setPipeOpened(ctx, hdr, msg)
 	case PIPE_DATA:
 		d.newPipeData(ctx, hdr, msg)
+	case PIPE_DATA_ACK:
+		d.ackPipeData(ctx, hdr, msg)
 	case PIPE_CLOSE:
 		d.setPipeClosed(ctx, hdr, msg)
 	case PIPE_UNKNOWN:
@@ -160,10 +163,11 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 
 	if lp, ok := d.listening[msg.PipeName]; ok {
 		pipe := &Pipe{
-			other:   hdr.Sender,
-			handler: d,
-			session: msg.Session,
-			message: make(chan []byte, d.PipeBacklog),
+			other:     hdr.Sender,
+			handler:   d,
+			session:   msg.Session,
+			message:   make(chan pipeMessage, d.PipeBacklog),
+			nextSeqId: 1,
 		}
 
 		_, ok := d.pipes[mkpipeKey(pipe.other, msg.Session)]
@@ -173,7 +177,10 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 
 		d.pipes[mkpipeKey(pipe.other, msg.Session)] = pipe
 
-		var retPayload []byte
+		var (
+			zrrtData   []byte
+			retPayload []byte
+		)
 
 		if msg.Encrypted {
 			ks := crypto.NewKKResponder(d.identityKey, hdr.Sender)
@@ -203,7 +210,7 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 			pipe.csr = csr
 			pipe.csw = csw
 
-			msg.Data = out
+			zrrtData = out
 		}
 
 		// TODO implement a backlog via a buffered channel and a
@@ -211,9 +218,9 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 		lp.newPipes <- pipe
 
 		// This is to support 0-RTT connects
-		if len(msg.Data) > 0 {
+		if len(zrrtData) > 0 {
 			log.Debugf("detected 0-rtt pipe open: %d bytes", len(msg.Data))
-			pipe.message <- msg.Data
+			pipe.message <- pipeMessage{hdr, msg, zrrtData}
 		}
 
 		var ret Message
@@ -266,19 +273,7 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		} else {
 			log.Debugf("%s inject pipe data: %v", d.desc(), msg.Session)
 
-			if msg.Encrypted {
-				if pipe.csr != nil {
-					data, err := pipe.csr.Decrypt(nil, nil, msg.Data)
-					if err != nil {
-						log.Printf("%s error decrypting pipe data: %s", err)
-						return
-					}
-
-					msg.Data = data
-				}
-			}
-
-			pipe.message <- msg.Data
+			pipe.message <- pipeMessage{hdr, msg, nil}
 		}
 	} else {
 		log.Debugf("unknown pipe: %d", msg.Session)
@@ -287,6 +282,18 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		errM.Session = msg.Session
 
 		d.sender.SendData(ctx, hdr.Sender, d.peerProto, &errM)
+	}
+}
+
+func (d *DataHandler) ackPipeData(ctx context.Context, hdr *pb.Header, msg *Message) {
+	d.pipeLock.Lock()
+	defer d.pipeLock.Unlock()
+
+	if pipe, ok := d.pipes[mkpipeKey(hdr.Sender, msg.Session)]; ok {
+		pipe.lock.Lock()
+		defer pipe.lock.Unlock()
+
+		pipe.recvThreshold = msg.SeqId
 	}
 }
 
@@ -306,7 +313,7 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 			// This is to support a final message without having to transmit
 			// a close as a second message
 			if len(msg.Data) > 0 {
-				pipe.message <- msg.Data
+				pipe.message <- pipeMessage{hdr, msg, nil}
 			}
 
 			close(pipe.message)
@@ -317,11 +324,12 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 	} else if msg.PipeName != "" && len(msg.Data) > 0 {
 		if lp, ok := d.listening[msg.PipeName]; ok {
 			pipe := &Pipe{
-				other:   hdr.Sender,
-				handler: d,
-				session: msg.Session,
-				message: make(chan []byte, d.PipeBacklog),
-				closed:  true,
+				other:     hdr.Sender,
+				handler:   d,
+				session:   msg.Session,
+				message:   make(chan pipeMessage, d.PipeBacklog),
+				closed:    true,
+				nextSeqId: 1,
 			}
 
 			// We don't even bother to register this pipe, no more
@@ -333,7 +341,7 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 			lp.newPipes <- pipe
 
 			// This is to support 0-RTT connects
-			pipe.message <- msg.Data
+			pipe.message <- pipeMessage{hdr, msg, nil}
 		} else {
 			log.Debugf("unknown service '%s'in zero-rtt noreply pipe: %d",
 				msg.Session, msg.PipeName)

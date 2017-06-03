@@ -11,6 +11,12 @@ import (
 	"github.com/evanphx/mesh/pb"
 )
 
+type pipeMessage struct {
+	hdr  *pb.Header
+	msg  *Message
+	data []byte
+}
+
 type Pipe struct {
 	handler *DataHandler
 	pending chan struct{}
@@ -21,9 +27,13 @@ type Pipe struct {
 	err     error
 	service string
 
-	message chan []byte
+	message chan pipeMessage
 
 	lock sync.Mutex
+
+	nextSeqId uint64
+
+	recvThreshold uint64
 
 	ks       *crypto.KKInitState
 	csr, csw crypto.CipherState
@@ -65,7 +75,9 @@ func (l *ListenPipe) Close() error {
 	delete(l.handler.listening, l.name)
 
 	if l.adver != nil {
-		// TODO l.handler.opChan <- removeAdver{l.adver}
+		if l.handler.resolver != nil {
+			l.handler.resolver.RemoveAdvertisement(l.adver)
+		}
 	}
 
 	l.err = ErrClosed
@@ -128,11 +140,12 @@ func (d *DataHandler) makePendingPipe(dest mesh.Identity) *Pipe {
 	id := d.sessionId(dest)
 
 	pipe := &Pipe{
-		other:   dest,
-		handler: d,
-		session: id,
-		pending: make(chan struct{}),
-		message: make(chan []byte, d.PipeBacklog),
+		other:     dest,
+		handler:   d,
+		session:   id,
+		pending:   make(chan struct{}),
+		message:   make(chan pipeMessage, d.PipeBacklog),
+		nextSeqId: 1,
 	}
 
 	d.pipes[mkpipeKey(dest, id)] = pipe
@@ -187,12 +200,13 @@ func (d *DataHandler) LazyConnectPipe(ctx context.Context, dst mesh.Identity, na
 	id := d.sessionId(dst)
 
 	pipe := &Pipe{
-		other:   dst,
-		handler: d,
-		session: id,
-		service: name,
-		lazy:    true,
-		message: make(chan []byte, d.PipeBacklog),
+		other:     dst,
+		handler:   d,
+		session:   id,
+		service:   name,
+		lazy:      true,
+		message:   make(chan pipeMessage, d.PipeBacklog),
+		nextSeqId: 1,
 	}
 
 	d.pipes[mkpipeKey(dst, id)] = pipe
@@ -223,9 +237,11 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 	}
 
 	var msg Message
-	msg.Type = PIPE_OPEN
 	msg.Session = p.session
 	msg.Data = data
+	msg.SeqId = p.nextSeqId
+
+	p.nextSeqId++
 
 	if p.lazy {
 		p.ks = crypto.NewKKInitiator(p.handler.identityKey, p.other)
@@ -267,6 +283,9 @@ func (p *Pipe) SendFinal(ctx context.Context, data []byte) error {
 	msg.Type = PIPE_CLOSE
 	msg.Session = p.session
 	msg.Data = data
+	msg.SeqId = p.nextSeqId
+
+	p.nextSeqId++
 
 	if p.lazy {
 		p.lazy = false
@@ -285,6 +304,8 @@ func (p *Pipe) SendFinal(ctx context.Context, data []byte) error {
 	return p.handler.sender.SendData(ctx, p.other, p.handler.peerProto, &msg)
 }
 
+var ErrInvalidState = errors.New("encrypted message but no decryption context")
+
 func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 	select {
 	case m, ok := <-p.message:
@@ -292,7 +313,30 @@ func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 			return nil, p.err
 		}
 
-		return m, nil
+		var ack Message
+		ack.Type = PIPE_DATA_ACK
+		ack.Session = p.session
+		ack.SeqId = m.msg.SeqId
+
+		p.handler.sender.SendData(ctx, m.hdr.Sender, p.handler.peerProto, &ack)
+
+		if m.data != nil {
+			return m.data, nil
+		} else if m.msg.Encrypted {
+			if p.csr == nil {
+				return nil, ErrInvalidState
+			}
+
+			data, err := p.csr.Decrypt(nil, nil, m.msg.Data)
+			if err != nil {
+				log.Printf("%s error decrypting pipe data: %s", err)
+				return nil, err
+			}
+
+			return data, nil
+		} else {
+			return m.msg.Data, nil
+		}
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}

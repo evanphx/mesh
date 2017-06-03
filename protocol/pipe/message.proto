@@ -6,6 +6,7 @@ package pipe;
 
 message Message {
   uint64 session = 1;
+  uint64 seq_id = 2;
 
   enum Type {
     PIPE_OPEN = 0;
@@ -13,13 +14,14 @@ message Message {
     PIPE_DATA = 2;
     PIPE_UNKNOWN = 3;
     PIPE_OPENED = 4;
+    PIPE_DATA_ACK = 5;
   }
 
-  Type type = 2;
+  Type type = 3;
 
-  string pipe_name = 3;
+  string pipe_name = 4;
 
-  bytes data = 4;
+  bytes data = 5;
 
-  bool encrypted = 5;
+  bool encrypted = 6;
 }
