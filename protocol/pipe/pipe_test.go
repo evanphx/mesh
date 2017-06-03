@@ -1,0 +1,119 @@
+package pipe
+
+import (
+	"context"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/evanphx/mesh/crypto"
+	"github.com/evanphx/mesh/util"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vektra/neko"
+)
+
+func TestPipe(t *testing.T) {
+	n := neko.Modern(t)
+
+	n.It("perfoms a handshake to connect a pipe", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err := lp.Accept(ctx)
+			require.NoError(t, err)
+
+			err = p1.Send(ctx, []byte("hello"))
+			require.NoError(t, err)
+		}()
+
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		recv, err := p2.Recv(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, "hello", string(recv))
+
+		wg.Wait()
+	})
+
+	n.It("can handshake on first use", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err := lp.Accept(ctx)
+			require.NoError(t, err)
+
+			recv, err := p1.Recv(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "hello", string(recv))
+		}()
+
+		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("hello"))
+		require.NoError(t, err)
+
+		wg.Wait()
+	})
+
+	n.Meow()
+}

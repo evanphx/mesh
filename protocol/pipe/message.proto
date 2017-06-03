@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+package pipe;
+
+message Message {
+  uint64 session = 1;
+
+  enum Type {
+    PIPE_OPEN = 0;
+    PIPE_CLOSE = 1;
+    PIPE_DATA = 2;
+    PIPE_UNKNOWN = 3;
+    PIPE_OPENED = 4;
+  }
+
+  Type type = 2;
+
+  string pipe_name = 3;
+
+  bytes data = 4;
+
+  bool encrypted = 5;
+}

@@ -16,11 +16,18 @@ type SendDataer interface {
 }
 
 type SendAdapter struct {
-	Sender  mesh.Identity
-	Handler HandleHeader
+	Sender   mesh.Identity
+	Handler  HandleHeader
+	Messages []*SentMessage
 }
 
 func (s SendAdapter) SendData(ctx context.Context, dst mesh.Identity, proto int32, msg interface{}) error {
+	s.Messages = append(s.Messages, &SentMessage{
+		Dest:    dst,
+		Proto:   proto,
+		Message: msg,
+	})
+
 	var hdr pb.Header
 	hdr.Sender = s.Sender
 	hdr.Destination = dst
@@ -33,5 +40,11 @@ func (s SendAdapter) SendData(ctx context.Context, dst mesh.Identity, proto int3
 
 	hdr.Body = data
 
-	return s.Handler.Handle(ctx, &hdr)
+	if s.Handler == nil {
+		panic("NO HANDLER")
+	}
+
+	go s.Handler.Handle(ctx, &hdr)
+
+	return nil
 }
