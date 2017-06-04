@@ -33,7 +33,8 @@ type Pipe struct {
 
 	nextSeqId uint64
 
-	recvThreshold uint64
+	inputThreshold uint64
+	recvThreshold  uint64
 
 	ks       *crypto.KKInitState
 	csr, csw crypto.CipherState

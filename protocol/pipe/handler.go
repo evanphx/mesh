@@ -263,6 +263,13 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		pipe.lock.Lock()
 		defer pipe.lock.Unlock()
 
+		if msg.SeqId <= pipe.inputThreshold {
+			log.Debugf("%s duplicate data packet on %d (%d)", d.desc(), msg.Session, msg.SeqId)
+			return
+		}
+
+		pipe.inputThreshold = msg.SeqId
+
 		if pipe.closed {
 			log.Debugf("injected data to closed pipe: %d", msg.Session)
 			var closeM Message

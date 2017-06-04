@@ -177,5 +177,68 @@ func TestPipe(t *testing.T) {
 		assert.Equal(t, p2.recvThreshold, msg.SeqId)
 	})
 
+	n.It("ignores duplicate messages receieved", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var (
+			wg sync.WaitGroup
+			p1 *Pipe
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err = lp.Accept(ctx)
+			require.NoError(t, err)
+
+			recv, err := p1.Recv(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "hello", string(recv))
+		}()
+
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("hello"))
+		require.NoError(t, err)
+
+		wg.Wait()
+
+		max := len(s1.Messages)
+
+		// Replay the last message p2 sent to see that p1 ignores it
+
+		h1.Handle(ctx, s2.Messages[len(s2.Messages)-1].ToHeader(s2.Sender))
+
+		time.Sleep(100 * time.Millisecond)
+
+		assert.Equal(t, max, len(s1.Messages))
+		assert.Equal(t, 0, len(p1.message))
+	})
+
 	n.Meow()
 }
