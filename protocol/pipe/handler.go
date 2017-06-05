@@ -255,6 +255,28 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 	}
 }
 
+func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) {
+	pos := msg.SeqId - pipe.inputThreshold - 1
+
+	for uint64(len(pipe.window)) < pos {
+		pipe.window = append(pipe.window, pipeMessage{})
+	}
+
+	pipe.windowUsed = pos
+
+	// - 1 because we don't bother to store the head of the window in the window
+	// buffer, we'll just emit it when it's seen, then drain the window
+	pipe.window[pos-1] = pipeMessage{hdr, msg, nil}
+}
+
+func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
+	for i := uint64(0); i < pipe.windowUsed; i++ {
+		pipe.message <- pipe.window[i]
+	}
+
+	pipe.windowUsed = 0
+}
+
 func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Message) {
 	d.pipeLock.Lock()
 	defer d.pipeLock.Unlock()
@@ -265,6 +287,13 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 
 		if msg.SeqId <= pipe.inputThreshold {
 			log.Debugf("%s duplicate data packet on %d (%d)", d.desc(), msg.Session, msg.SeqId)
+			return
+		}
+
+		// Detect out of order messages
+		if pipe.inputThreshold+1 != msg.SeqId {
+			log.Debugf("%s Out of order message detected (%d). expected %d, got %d", d.desc(), msg.Session, pipe.inputThreshold+1, msg.SeqId)
+			d.storeInWindow(pipe, hdr, msg)
 			return
 		}
 
@@ -281,6 +310,8 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 			log.Debugf("%s inject pipe data: %v", d.desc(), msg.Session)
 
 			pipe.message <- pipeMessage{hdr, msg, nil}
+
+			d.drainWindow(ctx, pipe)
 		}
 	} else {
 		log.Debugf("unknown pipe: %d", msg.Session)
