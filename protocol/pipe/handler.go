@@ -3,6 +3,7 @@ package pipe
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -15,6 +16,8 @@ import (
 	"github.com/evanphx/mesh/log"
 	"github.com/evanphx/mesh/pb"
 )
+
+const MaxWindowSize = 256
 
 type Resolver interface {
 	LookupSelector(*mesh.PipeSelector) (mesh.Identity, string, error)
@@ -321,8 +324,15 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 	}
 }
 
-func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) {
+var ErrWindowTooLarge = errors.New("window would exceed maximum size")
+
+func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) error {
 	pos := msg.SeqId - pipe.inputThreshold - 1
+
+	if pos >= MaxWindowSize {
+		log.Printf("%s Maximum window distance detected, aborting pipe: %d", d.desc(), pipe.session)
+		return ErrWindowTooLarge
+	}
 
 	for uint64(len(pipe.window)) <= pos {
 		pipe.window = append(pipe.window, pipeMessage{})
@@ -335,6 +345,7 @@ func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) {
 	log.Debugf("store in window (%d => %d). used=%d", msg.SeqId, pos, pipe.windowUsed)
 
 	pipe.window[pos] = pipeMessage{hdr, msg, nil}
+	return nil
 }
 
 func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
@@ -357,11 +368,22 @@ func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
 	pipe.windowUsed = 0
 }
 
+func (d *DataHandler) closePipeInAnger(pipe *Pipe, key pipeKey) {
+	delete(d.pipes, key)
+
+	pipe.err = ErrClosed
+	pipe.closed = true
+
+	close(pipe.message)
+}
+
 func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Message) {
 	d.pipeLock.Lock()
 	defer d.pipeLock.Unlock()
 
-	if pipe, ok := d.pipes[mkpipeKey(hdr.Sender, msg.Session)]; ok {
+	key := mkpipeKey(hdr.Sender, msg.Session)
+
+	if pipe, ok := d.pipes[key]; ok {
 		pipe.lock.Lock()
 		defer pipe.lock.Unlock()
 
@@ -374,12 +396,19 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		if pipe.windowUsed > 0 {
 			// we're in out-of-order recovery mode. put everything into the window, then drain it.
 			log.Debugf("%s Out of order recovery mode detected, using window", d.desc())
-			d.storeInWindow(pipe, hdr, msg)
-			d.drainWindow(ctx, pipe)
+			err := d.storeInWindow(pipe, hdr, msg)
+			if err != nil {
+				d.closePipeInAnger(pipe, key)
+			} else {
+				d.drainWindow(ctx, pipe)
+			}
 			return
 		} else if pipe.inputThreshold+1 != msg.SeqId {
 			log.Debugf("%s Out of order message detected (%d). expected %d, got %d", d.desc(), msg.Session, pipe.inputThreshold+1, msg.SeqId)
-			d.storeInWindow(pipe, hdr, msg)
+			err := d.storeInWindow(pipe, hdr, msg)
+			if err != nil {
+				d.closePipeInAnger(pipe, key)
+			}
 			return
 		}
 
@@ -445,10 +474,10 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 				pipe.message <- pipeMessage{hdr, msg, nil}
 			}
 
-			close(pipe.message)
-
 			pipe.err = ErrClosed
 			pipe.closed = true
+
+			close(pipe.message)
 		}
 	} else if msg.PipeName != "" && len(msg.Data) > 0 {
 		if lp, ok := d.listening[msg.PipeName]; ok {
