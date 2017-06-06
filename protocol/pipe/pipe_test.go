@@ -441,5 +441,91 @@ func TestPipe(t *testing.T) {
 		wg.Wait()
 	})
 
+	n.It("processes only used sequences of the window", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+
+			rh util.ReverseHandler
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+		s2.Sync = true
+
+		s1.Handler = &h2
+		rh.Handler = &h1
+		s2.Handler = &rh
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var (
+			wg sync.WaitGroup
+			p1 *Pipe
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err = lp.Accept(ctx)
+			require.NoError(t, err)
+
+			recv, err := p1.Recv(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "hello", string(recv))
+
+			recv, err = p1.Recv(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "world", string(recv))
+
+			recv, err = p1.Recv(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "again", string(recv))
+
+			recv, err = p1.Recv(ctx)
+			require.NoError(t, err)
+			assert.Equal(t, "friends", string(recv))
+		}()
+
+		rh.PassThrough = true
+
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		rh.PassThrough = false
+
+		err = p2.Send(ctx, []byte("hello"))
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("world"))
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("again"))
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("friends"))
+		require.NoError(t, err)
+
+		rh.Swap(0, 3)
+		rh.Swap(1, 3)
+
+		rh.DeliverAsStored()
+
+		wg.Wait()
+	})
+
 	n.Meow()
 }

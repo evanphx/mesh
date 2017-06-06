@@ -36,8 +36,9 @@ type Pipe struct {
 	inputThreshold uint64
 	recvThreshold  uint64
 
-	window     []pipeMessage
-	windowUsed uint64
+	window      []pipeMessage
+	windowUsed  uint64
+	windowStart uint64
 
 	ks       *crypto.KKInitState
 	csr, csw crypto.CipherState

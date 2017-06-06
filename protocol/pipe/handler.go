@@ -202,13 +202,19 @@ func (d *DataHandler) setPipeUnknown(ctx context.Context, hdr *pb.Header, msg *M
 }
 
 func (d *DataHandler) drainPossibleUnknowns(ctx context.Context, pipe *Pipe, session uint64) {
-	for _, pm := range d.unknownDatas[session] {
-		// Store them in the window because they might be out of order!
-		d.storeInWindow(pipe, pm.hdr, pm.msg)
-	}
+	if sl, ok := d.unknownDatas[session]; ok {
+		// We have to move the start forward because the lazy connect trigger had 0 and we already
+		// sent it, so we don't want to detect that there is a hole at 0.
+		pipe.windowStart = 1
 
-	// Now deal with anything in the window we can
-	d.drainWindow(ctx, pipe)
+		for _, pm := range sl {
+			// Store them in the window because they might be out of order!
+			d.storeInWindow(pipe, pm.hdr, pm.msg)
+		}
+
+		// Now deal with anything in the window we can
+		d.drainWindow(ctx, pipe)
+	}
 }
 
 func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *Message) {
@@ -318,22 +324,36 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) {
 	pos := msg.SeqId - pipe.inputThreshold - 1
 
-	for uint64(len(pipe.window)) < pos {
+	for uint64(len(pipe.window)) <= pos {
 		pipe.window = append(pipe.window, pipeMessage{})
 	}
 
-	pipe.windowUsed = pos
+	if pipe.windowUsed < pos {
+		pipe.windowUsed = pos + 1
+	}
 
-	// - 1 because we don't bother to store the head of the window in the window
-	// buffer, we'll just emit it when it's seen, then drain the window
-	pipe.window[pos-1] = pipeMessage{hdr, msg, nil}
+	log.Debugf("store in window (%d => %d). used=%d", msg.SeqId, pos, pipe.windowUsed)
+
+	pipe.window[pos] = pipeMessage{hdr, msg, nil}
 }
 
 func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
-	for i := uint64(0); i < pipe.windowUsed; i++ {
-		pipe.message <- pipe.window[i]
+	for i := pipe.windowStart; i < pipe.windowUsed; i++ {
+		pm := pipe.window[i]
+
+		// Oop, hit a hole, can't continue
+		if pm.hdr == nil {
+			log.Debugf("window hole at %d", i)
+			pipe.windowStart = i
+			return
+		}
+
+		log.Debugf("deliver from window: %d (%d)", i, pm.msg.SeqId)
+
+		pipe.message <- pm
 	}
 
+	pipe.windowStart = 0
 	pipe.windowUsed = 0
 }
 
@@ -351,7 +371,13 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		}
 
 		// Detect out of order messages
-		if pipe.inputThreshold+1 != msg.SeqId {
+		if pipe.windowUsed > 0 {
+			// we're in out-of-order recovery mode. put everything into the window, then drain it.
+			log.Debugf("%s Out of order recovery mode detected, using window", d.desc())
+			d.storeInWindow(pipe, hdr, msg)
+			d.drainWindow(ctx, pipe)
+			return
+		} else if pipe.inputThreshold+1 != msg.SeqId {
 			log.Debugf("%s Out of order message detected (%d). expected %d, got %d", d.desc(), msg.Session, pipe.inputThreshold+1, msg.SeqId)
 			d.storeInWindow(pipe, hdr, msg)
 			return
