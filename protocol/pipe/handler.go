@@ -26,6 +26,11 @@ type pipeKey struct {
 	id uint64
 }
 
+type unknownData struct {
+	pipeMessage
+	expire time.Time
+}
+
 type DataHandler struct {
 	PipeBacklog int
 
@@ -40,7 +45,8 @@ type DataHandler struct {
 	listening map[string]*ListenPipe
 	pipes     map[pipeKey]*Pipe
 
-	unknownDatas map[uint64][]pipeMessage
+	unknownLock  sync.Mutex
+	unknownDatas map[uint64][]unknownData
 }
 
 func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
@@ -54,7 +60,44 @@ func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
 	d.nextSession = new(uint64)
 	d.listening = make(map[string]*ListenPipe)
 	d.pipes = make(map[pipeKey]*Pipe)
-	d.unknownDatas = make(map[uint64][]pipeMessage)
+	d.unknownDatas = make(map[uint64][]unknownData)
+
+	go d.invalidateUnknowns()
+}
+
+func (d *DataHandler) invalidateUnknowns() {
+	ctx := context.Background()
+
+	for {
+		d.unknownLock.Lock()
+
+		now := time.Now()
+
+		var toDelete []uint64
+
+		for sess, sl := range d.unknownDatas {
+			for _, uk := range sl {
+				if uk.expire.After(now) {
+					toDelete = append(toDelete, sess)
+					log.Debugf("sending unknown session message")
+
+					var errM Message
+					errM.Type = PIPE_UNKNOWN
+					errM.Session = sess
+
+					d.sender.SendData(ctx, uk.hdr.Sender, d.peerProto, &errM)
+					break
+				}
+			}
+		}
+
+		for _, sess := range toDelete {
+			delete(d.unknownDatas, sess)
+		}
+
+		d.unknownLock.Unlock()
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (d *DataHandler) sessionId(dest mesh.Identity) uint64 {
@@ -158,10 +201,14 @@ func (d *DataHandler) setPipeUnknown(ctx context.Context, hdr *pb.Header, msg *M
 	}
 }
 
-func (d *DataHandler) drainPossibleUnknowns(pipe *Pipe, session uint64) {
+func (d *DataHandler) drainPossibleUnknowns(ctx context.Context, pipe *Pipe, session uint64) {
 	for _, pm := range d.unknownDatas[session] {
-		pipe.message <- pm
+		// Store them in the window because they might be out of order!
+		d.storeInWindow(pipe, pm.hdr, pm.msg)
 	}
+
+	// Now deal with anything in the window we can
+	d.drainWindow(ctx, pipe)
 }
 
 func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *Message) {
@@ -252,7 +299,7 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 		}
 
 		if len(zrrtData) > 0 {
-			d.drainPossibleUnknowns(pipe, msg.Session)
+			d.drainPossibleUnknowns(ctx, pipe, msg.Session)
 		}
 	} else {
 		log.Debugf("%s unknown pipe requested: %s", d.desc(), msg.PipeName)
@@ -327,16 +374,17 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 			d.drainWindow(ctx, pipe)
 		}
 	} else {
-		d.unknownDatas[msg.Session] = append(d.unknownDatas[msg.Session], pipeMessage{hdr, msg, nil})
+		d.unknownLock.Lock()
 
-		/*
-			log.Debugf("unknown pipe: %d", msg.Session)
-			var errM Message
-			errM.Type = PIPE_UNKNOWN
-			errM.Session = msg.Session
+		d.unknownDatas[msg.Session] = append(
+			d.unknownDatas[msg.Session],
+			unknownData{
+				pipeMessage{hdr, msg, nil},
+				time.Now().Add(1 * time.Second),
+			},
+		)
 
-			d.sender.SendData(ctx, hdr.Sender, d.peerProto, &errM)
-		*/
+		d.unknownLock.Unlock()
 	}
 }
 

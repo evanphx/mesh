@@ -378,5 +378,68 @@ func TestPipe(t *testing.T) {
 		wg.Wait()
 	})
 
+	n.It("sends an error back on an unknown session", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+		s2.Sync = true
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var (
+			wg sync.WaitGroup
+			p1 *Pipe
+		)
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err = lp.Accept(ctx)
+			require.NoError(t, err)
+		}()
+
+		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("hello"))
+		require.NoError(t, err)
+
+		time.Sleep(100 * time.Millisecond)
+
+		// "forget" about any open pipes
+		h1.pipes = make(map[pipeKey]*Pipe)
+
+		time.Sleep(2 * time.Second)
+
+		err = p2.Send(ctx, []byte("world"))
+		require.NoError(t, err)
+
+		time.Sleep(2 * time.Second)
+
+		err = p2.Send(ctx, []byte("again"))
+		require.Error(t, err)
+		wg.Wait()
+	})
+
 	n.Meow()
 }
