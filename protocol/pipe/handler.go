@@ -39,6 +39,8 @@ type DataHandler struct {
 	pipeLock  sync.Mutex
 	listening map[string]*ListenPipe
 	pipes     map[pipeKey]*Pipe
+
+	unknownDatas map[uint64][]pipeMessage
 }
 
 func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
@@ -52,6 +54,7 @@ func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
 	d.nextSession = new(uint64)
 	d.listening = make(map[string]*ListenPipe)
 	d.pipes = make(map[pipeKey]*Pipe)
+	d.unknownDatas = make(map[uint64][]pipeMessage)
 }
 
 func (d *DataHandler) sessionId(dest mesh.Identity) uint64 {
@@ -155,6 +158,12 @@ func (d *DataHandler) setPipeUnknown(ctx context.Context, hdr *pb.Header, msg *M
 	}
 }
 
+func (d *DataHandler) drainPossibleUnknowns(pipe *Pipe, session uint64) {
+	for _, pm := range d.unknownDatas[session] {
+		pipe.message <- pm
+	}
+}
+
 func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *Message) {
 	d.pipeLock.Lock()
 	defer d.pipeLock.Unlock()
@@ -241,6 +250,10 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 		if err != nil {
 			log.Debugf("Error sending PIPE_OPENED: %s", err)
 		}
+
+		if len(zrrtData) > 0 {
+			d.drainPossibleUnknowns(pipe, msg.Session)
+		}
 	} else {
 		log.Debugf("%s unknown pipe requested: %s", d.desc(), msg.PipeName)
 
@@ -314,12 +327,16 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 			d.drainWindow(ctx, pipe)
 		}
 	} else {
-		log.Debugf("unknown pipe: %d", msg.Session)
-		var errM Message
-		errM.Type = PIPE_UNKNOWN
-		errM.Session = msg.Session
+		d.unknownDatas[msg.Session] = append(d.unknownDatas[msg.Session], pipeMessage{hdr, msg, nil})
 
-		d.sender.SendData(ctx, hdr.Sender, d.peerProto, &errM)
+		/*
+			log.Debugf("unknown pipe: %d", msg.Session)
+			var errM Message
+			errM.Type = PIPE_UNKNOWN
+			errM.Session = msg.Session
+
+			d.sender.SendData(ctx, hdr.Sender, d.peerProto, &errM)
+		*/
 	}
 }
 
