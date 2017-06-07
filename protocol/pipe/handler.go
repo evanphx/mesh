@@ -18,6 +18,7 @@ import (
 )
 
 const MaxWindowSize = 256
+const MaxAckBacklog = 20
 
 type Resolver interface {
 	LookupSelector(*mesh.PipeSelector) (mesh.Identity, string, error)
@@ -36,6 +37,7 @@ type unknownData struct {
 
 type DataHandler struct {
 	PipeBacklog int
+	AckBacklog  int
 
 	peerProto   int32
 	resolver    Resolver
@@ -55,6 +57,10 @@ type DataHandler struct {
 func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
 	if d.PipeBacklog == 0 {
 		d.PipeBacklog = 10
+	}
+
+	if d.AckBacklog == 0 {
+		d.AckBacklog = MaxAckBacklog
 	}
 
 	d.peerProto = proto
@@ -206,10 +212,6 @@ func (d *DataHandler) setPipeUnknown(ctx context.Context, hdr *pb.Header, msg *M
 
 func (d *DataHandler) drainPossibleUnknowns(ctx context.Context, pipe *Pipe, session uint64) {
 	if sl, ok := d.unknownDatas[session]; ok {
-		// We have to move the start forward because the lazy connect trigger had 0 and we already
-		// sent it, so we don't want to detect that there is a hole at 0.
-		pipe.windowStart = 1
-
 		for _, pm := range sl {
 			// Store them in the window because they might be out of order!
 			d.storeInWindow(pipe, pm.hdr, pm.msg)
@@ -228,16 +230,20 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 
 	if lp, ok := d.listening[msg.PipeName]; ok {
 		pipe := &Pipe{
-			other:     hdr.Sender,
-			handler:   d,
-			session:   msg.Session,
-			message:   make(chan pipeMessage, d.PipeBacklog),
-			nextSeqId: 1,
+			other:      hdr.Sender,
+			handler:    d,
+			session:    msg.Session,
+			message:    make(chan pipeMessage, d.PipeBacklog),
+			nextSeqId:  1,
+			ackBacklog: d.AckBacklog,
 		}
+
+		pipe.init()
 
 		_, ok := d.pipes[mkpipeKey(pipe.other, msg.Session)]
 		if ok {
-			panic("already using pipe!")
+			// Umm, ok?
+			return
 		}
 
 		d.pipes[mkpipeKey(pipe.other, msg.Session)] = pipe
@@ -284,7 +290,8 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 
 		// This is to support 0-RTT connects
 		if len(zrrtData) > 0 {
-			log.Debugf("detected 0-rtt pipe open: %d bytes", len(msg.Data))
+			pipe.inputThreshold = msg.SeqId
+			log.Debugf("detected 0-rtt pipe open: %d bytes (%d)", len(msg.Data), msg.SeqId)
 			pipe.message <- pipeMessage{hdr, msg, zrrtData}
 		}
 
@@ -338,7 +345,7 @@ func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) er
 		pipe.window = append(pipe.window, pipeMessage{})
 	}
 
-	if pipe.windowUsed < pos {
+	if pipe.windowUsed <= pos {
 		pipe.windowUsed = pos + 1
 	}
 
@@ -349,6 +356,7 @@ func (d *DataHandler) storeInWindow(pipe *Pipe, hdr *pb.Header, msg *Message) er
 }
 
 func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
+	log.Debugf("%s drain window from %d => %d", d.desc(), pipe.windowStart, pipe.windowUsed)
 	for i := pipe.windowStart; i < pipe.windowUsed; i++ {
 		pm := pipe.window[i]
 
@@ -412,6 +420,7 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 			return
 		}
 
+		log.Debugf("%s set default threshold of %d to %d", d.desc(), pipe.session, msg.SeqId)
 		pipe.inputThreshold = msg.SeqId
 
 		if pipe.closed {
@@ -451,7 +460,10 @@ func (d *DataHandler) ackPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		pipe.lock.Lock()
 		defer pipe.lock.Unlock()
 
-		pipe.recvThreshold = msg.SeqId
+		log.Debugf("%s update %d threshold to %d", d.desc(), pipe.session, msg.AckId)
+		pipe.recvThreshold = msg.AckId
+
+		pipe.cond.Broadcast()
 	}
 }
 
@@ -482,13 +494,16 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 	} else if msg.PipeName != "" && len(msg.Data) > 0 {
 		if lp, ok := d.listening[msg.PipeName]; ok {
 			pipe := &Pipe{
-				other:     hdr.Sender,
-				handler:   d,
-				session:   msg.Session,
-				message:   make(chan pipeMessage, d.PipeBacklog),
-				closed:    true,
-				nextSeqId: 1,
+				other:      hdr.Sender,
+				handler:    d,
+				session:    msg.Session,
+				message:    make(chan pipeMessage, d.PipeBacklog),
+				closed:     true,
+				nextSeqId:  1,
+				ackBacklog: d.AckBacklog,
 			}
+
+			pipe.init()
 
 			// We don't even bother to register this pipe, no more
 			// data is available on it.

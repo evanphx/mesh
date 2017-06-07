@@ -30,6 +30,7 @@ type Pipe struct {
 	message chan pipeMessage
 
 	lock sync.Mutex
+	cond sync.Cond
 
 	nextSeqId uint64
 
@@ -42,6 +43,12 @@ type Pipe struct {
 
 	ks       *crypto.KKInitState
 	csr, csw crypto.CipherState
+
+	ackBacklog int
+}
+
+func (p *Pipe) init() {
+	p.cond.L = &p.lock
 }
 
 type ListenPipe struct {
@@ -145,13 +152,16 @@ func (d *DataHandler) makePendingPipe(dest mesh.Identity) *Pipe {
 	id := d.sessionId(dest)
 
 	pipe := &Pipe{
-		other:     dest,
-		handler:   d,
-		session:   id,
-		pending:   make(chan struct{}),
-		message:   make(chan pipeMessage, d.PipeBacklog),
-		nextSeqId: 1,
+		other:      dest,
+		handler:    d,
+		session:    id,
+		pending:    make(chan struct{}),
+		message:    make(chan pipeMessage, d.PipeBacklog),
+		nextSeqId:  1,
+		ackBacklog: d.AckBacklog,
 	}
+
+	pipe.init()
 
 	d.pipes[mkpipeKey(dest, id)] = pipe
 
@@ -205,14 +215,17 @@ func (d *DataHandler) LazyConnectPipe(ctx context.Context, dst mesh.Identity, na
 	id := d.sessionId(dst)
 
 	pipe := &Pipe{
-		other:     dst,
-		handler:   d,
-		session:   id,
-		service:   name,
-		lazy:      true,
-		message:   make(chan pipeMessage, d.PipeBacklog),
-		nextSeqId: 1,
+		other:      dst,
+		handler:    d,
+		session:    id,
+		service:    name,
+		lazy:       true,
+		message:    make(chan pipeMessage, d.PipeBacklog),
+		nextSeqId:  1,
+		ackBacklog: d.AckBacklog,
 	}
+
+	pipe.init()
 
 	d.pipes[mkpipeKey(dst, id)] = pipe
 
@@ -239,6 +252,10 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 
 	if p.closed {
 		return p.err
+	}
+
+	for p.blockForAcks() {
+		p.cond.Wait()
 	}
 
 	var msg Message
@@ -321,7 +338,7 @@ func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 		var ack Message
 		ack.Type = PIPE_DATA_ACK
 		ack.Session = p.session
-		ack.SeqId = m.msg.SeqId
+		ack.AckId = m.msg.SeqId
 
 		p.handler.sender.SendData(ctx, m.hdr.Sender, p.handler.peerProto, &ack)
 
@@ -371,4 +388,8 @@ func (p *Pipe) Close(ctx context.Context) error {
 	msg.Session = p.session
 
 	return p.handler.sender.SendData(ctx, p.other, p.handler.peerProto, &msg)
+}
+
+func (p *Pipe) blockForAcks() bool {
+	return p.nextSeqId > p.recvThreshold+uint64(p.ackBacklog)
 }
