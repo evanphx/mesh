@@ -314,13 +314,6 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 		// nonblocking send here
 		lp.newPipes <- pipe
 
-		// This is to support 0-RTT connects
-		if len(zrrtData) > 0 {
-			pipe.inputThreshold = msg.SeqId
-			log.Debugf("%s detected 0-rtt pipe open: %d bytes (%d)", d.desc(), len(msg.Data), msg.SeqId)
-			pipe.message <- pipeMessage{hdr, msg, zrrtData}
-		}
-
 		var ret Message
 		ret.Type = PIPE_OPENED
 		ret.Session = msg.Session
@@ -341,7 +334,11 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 			log.Debugf("Error sending PIPE_OPENED: %s", err)
 		}
 
+		// This is to support 0-RTT connects
 		if len(zrrtData) > 0 {
+			pipe.inputThreshold = msg.SeqId
+			log.Debugf("%s detected 0-rtt pipe open: %d bytes (%d)", d.desc(), len(msg.Data), msg.SeqId)
+			d.deliverToPipe(ctx, pipe, pipeMessage{hdr, msg, zrrtData})
 			d.drainPossibleUnknowns(ctx, pipe, msg.Session)
 		}
 	} else {
@@ -396,7 +393,7 @@ func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
 
 		log.Debugf("deliver from window: %d (%d)", i, pm.msg.SeqId)
 
-		pipe.message <- pm
+		d.deliverToPipe(ctx, pipe, pm)
 	}
 
 	pipe.windowStart = 0
@@ -416,6 +413,17 @@ func (d *DataHandler) closePipeInAnger(pipe *Pipe, key pipeKey) {
 	pipe.closed = true
 
 	close(pipe.message)
+}
+
+func (d *DataHandler) deliverToPipe(ctx context.Context, pipe *Pipe, pm pipeMessage) {
+	var ack Message
+	ack.Type = PIPE_DATA_ACK
+	ack.Session = pipe.session
+	ack.AckId = pm.msg.SeqId
+
+	d.sender.SendData(ctx, pm.hdr.Sender, d.peerProto, &ack)
+	pipe.message <- pm
+
 }
 
 func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Message) {
@@ -466,7 +474,7 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		} else {
 			log.Debugf("%s inject pipe data: %v", d.desc(), msg.Session)
 
-			pipe.message <- pipeMessage{hdr, msg, nil}
+			d.deliverToPipe(ctx, pipe, pipeMessage{hdr, msg, nil})
 
 			d.drainWindow(ctx, pipe)
 		}
@@ -541,7 +549,7 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 			// This is to support a final message without having to transmit
 			// a close as a second message
 			if len(msg.Data) > 0 {
-				pipe.message <- pipeMessage{hdr, msg, nil}
+				d.deliverToPipe(ctx, pipe, pipeMessage{hdr, msg, nil})
 			}
 
 			pipe.lifetimeCancel()
@@ -574,7 +582,7 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 			lp.newPipes <- pipe
 
 			// This is to support 0-RTT connects
-			pipe.message <- pipeMessage{hdr, msg, nil}
+			d.deliverToPipe(ctx, pipe, pipeMessage{hdr, msg, nil})
 		} else {
 			log.Debugf("unknown service '%s'in zero-rtt noreply pipe: %d",
 				msg.Session, msg.PipeName)

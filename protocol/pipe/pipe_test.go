@@ -627,7 +627,7 @@ func TestPipeAck(t *testing.T) {
 		s1.Handler = &qh
 		s2.Handler = &h1
 
-		qh.SetPassthrough(true)
+		qh.SetPassX(1)
 
 		lp, err := h1.ListenPipe("test")
 		require.NoError(t, err)
@@ -645,8 +645,6 @@ func TestPipeAck(t *testing.T) {
 			require.NoError(t, err)
 
 			time.Sleep(100 * time.Millisecond)
-
-			qh.SetPassthrough(false)
 
 			p1.Recv(ctx)
 		}()
@@ -704,7 +702,7 @@ func TestPipeAck(t *testing.T) {
 		s1.Handler = &qh
 		s2.Handler = &h1
 
-		qh.PassThrough = true
+		qh.SetPassX(1)
 
 		lp, err := h1.ListenPipe("test")
 		require.NoError(t, err)
@@ -728,7 +726,6 @@ func TestPipeAck(t *testing.T) {
 			}
 
 			time.Sleep(100 * time.Millisecond)
-			qh.SetPassthrough(false)
 
 			log.Debugf("begin recv phase")
 
@@ -807,7 +804,7 @@ func TestPipeAck(t *testing.T) {
 		s1.Handler = &qh
 		s2.Handler = &h1
 
-		qh.PassThrough = true
+		qh.SetPassX(1)
 
 		lp, err := h1.ListenPipe("test")
 		require.NoError(t, err)
@@ -831,7 +828,6 @@ func TestPipeAck(t *testing.T) {
 			}
 
 			time.Sleep(100 * time.Millisecond)
-			qh.SetPassthrough(false)
 
 			log.Debugf("begin recv phase")
 

@@ -402,13 +402,6 @@ func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 			return nil, p.err
 		}
 
-		var ack Message
-		ack.Type = PIPE_DATA_ACK
-		ack.Session = p.session
-		ack.AckId = m.msg.SeqId
-
-		p.handler.sender.SendData(ctx, m.hdr.Sender, p.handler.peerProto, &ack)
-
 		if m.data != nil {
 			return m.data, nil
 		} else if m.msg.Encrypted {
