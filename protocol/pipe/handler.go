@@ -74,6 +74,15 @@ func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
 	go d.invalidateUnknowns()
 }
 
+func (d *DataHandler) Cleanup() {
+	d.pipeLock.Lock()
+	defer d.pipeLock.Unlock()
+
+	for k, p := range d.pipes {
+		d.closePipeInAnger(p, k)
+	}
+}
+
 func (d *DataHandler) invalidateUnknowns() {
 	ctx := context.Background()
 
@@ -93,6 +102,7 @@ func (d *DataHandler) invalidateUnknowns() {
 					var errM Message
 					errM.Type = PIPE_UNKNOWN
 					errM.Session = sess
+					errM.AckId = uk.msg.SeqId
 
 					d.sender.SendData(ctx, uk.hdr.Sender, d.peerProto, &errM)
 					break
@@ -132,6 +142,8 @@ func (d *DataHandler) Handle(ctx context.Context, hdr *pb.Header) error {
 		return err
 	}
 
+	log.Debugf("%s handle: %s", d.desc(), msg.Type)
+
 	switch msg.Type {
 	case PIPE_OPEN:
 		d.newPipeRequest(ctx, hdr, msg)
@@ -164,6 +176,11 @@ func (d *DataHandler) setPipeOpened(ctx context.Context, hdr *pb.Header, msg *Me
 		pipe.lock.Lock()
 		defer pipe.lock.Unlock()
 
+		log.Debugf("%s pipe opened: %d", d.desc(), msg.Session)
+
+		d.clearAcks(pipe, msg.AckId)
+		pipe.recvThreshold = msg.AckId
+
 		if msg.Encrypted {
 			if pipe.ks == nil {
 				panic(fmt.Sprintf("%s encrypted opened but handshake not setup: %d", d.desc(), msg.Session))
@@ -195,6 +212,15 @@ func (d *DataHandler) setPipeUnknown(ctx context.Context, hdr *pb.Header, msg *M
 	if pipe, ok := d.pipes[mkpipeKey(hdr.Sender, msg.Session)]; ok {
 		pipe.lock.Lock()
 		defer pipe.lock.Unlock()
+
+		pipe.lifetimeCancel()
+
+		d.clearAcks(pipe, msg.AckId)
+
+		if pipe.closed == true {
+			// kewl
+			return
+		}
 
 		close(pipe.message)
 
@@ -291,13 +317,14 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 		// This is to support 0-RTT connects
 		if len(zrrtData) > 0 {
 			pipe.inputThreshold = msg.SeqId
-			log.Debugf("detected 0-rtt pipe open: %d bytes (%d)", len(msg.Data), msg.SeqId)
+			log.Debugf("%s detected 0-rtt pipe open: %d bytes (%d)", d.desc(), len(msg.Data), msg.SeqId)
 			pipe.message <- pipeMessage{hdr, msg, zrrtData}
 		}
 
 		var ret Message
 		ret.Type = PIPE_OPENED
 		ret.Session = msg.Session
+		ret.AckId = msg.SeqId
 
 		if msg.Encrypted {
 			log.Debugf("%s responding with encrypted PIPE_OPENED to %s (%d)",
@@ -379,6 +406,12 @@ func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
 func (d *DataHandler) closePipeInAnger(pipe *Pipe, key pipeKey) {
 	delete(d.pipes, key)
 
+	pipe.lifetimeCancel()
+
+	if pipe.closed {
+		return
+	}
+
 	pipe.err = ErrClosed
 	pipe.closed = true
 
@@ -452,6 +485,29 @@ func (d *DataHandler) newPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 	}
 }
 
+func (d *DataHandler) clearAcks(pipe *Pipe, id uint64) {
+	log.Debugf("%s clear acks under %d", d.desc(), id)
+	var head int
+
+	for i, uk := range pipe.unackedMessages {
+		if uk.msg == nil {
+			break
+		} else if uk.msg.SeqId <= id {
+			head = i
+		} else {
+			break
+		}
+	}
+
+	if head == len(pipe.unackedMessages)-1 {
+		// Reset the slice entirely to prevent messages from accidentally living
+		// a long time in the array underneith.
+		pipe.unackedMessages = nil
+	} else {
+		pipe.unackedMessages = pipe.unackedMessages[head:]
+	}
+}
+
 func (d *DataHandler) ackPipeData(ctx context.Context, hdr *pb.Header, msg *Message) {
 	d.pipeLock.Lock()
 	defer d.pipeLock.Unlock()
@@ -460,7 +516,9 @@ func (d *DataHandler) ackPipeData(ctx context.Context, hdr *pb.Header, msg *Mess
 		pipe.lock.Lock()
 		defer pipe.lock.Unlock()
 
-		log.Debugf("%s update %d threshold to %d", d.desc(), pipe.session, msg.AckId)
+		d.clearAcks(pipe, msg.AckId)
+
+		log.Debugf("%s update %d threshold to %d (unacked=%d)", d.desc(), pipe.session, msg.AckId, len(pipe.unackedMessages))
 		pipe.recvThreshold = msg.AckId
 
 		pipe.cond.Broadcast()
@@ -485,6 +543,8 @@ func (d *DataHandler) setPipeClosed(ctx context.Context, hdr *pb.Header, msg *Me
 			if len(msg.Data) > 0 {
 				pipe.message <- pipeMessage{hdr, msg, nil}
 			}
+
+			pipe.lifetimeCancel()
 
 			pipe.err = ErrClosed
 			pipe.closed = true

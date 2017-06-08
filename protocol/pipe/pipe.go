@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/crypto"
@@ -17,7 +18,15 @@ type pipeMessage struct {
 	data []byte
 }
 
+const ResendInterval = 500 * time.Millisecond
+
+type unackedMessage struct {
+	msg  *Message
+	next time.Time
+}
+
 type Pipe struct {
+	global  context.Context
 	handler *DataHandler
 	pending chan struct{}
 	lazy    bool
@@ -26,6 +35,9 @@ type Pipe struct {
 	closed  bool
 	err     error
 	service string
+
+	lifetime       context.Context
+	lifetimeCancel func()
 
 	message chan pipeMessage
 
@@ -44,11 +56,17 @@ type Pipe struct {
 	ks       *crypto.KKInitState
 	csr, csw crypto.CipherState
 
-	ackBacklog int
+	resendInterval  time.Duration
+	ackBacklog      int
+	unackedMessages []unackedMessage
 }
 
 func (p *Pipe) init() {
+	p.lifetime, p.lifetimeCancel = context.WithCancel(context.Background())
 	p.cond.L = &p.lock
+	p.resendInterval = ResendInterval
+
+	go p.resendLoop()
 }
 
 type ListenPipe struct {
@@ -171,6 +189,8 @@ func (d *DataHandler) makePendingPipe(dest mesh.Identity) *Pipe {
 func (d *DataHandler) ConnectPipe(ctx context.Context, dst mesh.Identity, name string) (*Pipe, error) {
 	pipe := d.makePendingPipe(dst)
 
+	pipe.lock.Lock()
+
 	log.Debugf("%s open pipe to %s:%s", d.identityKey.Identity().Short(), dst.Short(), name)
 
 	var msg Message
@@ -182,6 +202,8 @@ func (d *DataHandler) ConnectPipe(ctx context.Context, dst mesh.Identity, name s
 	pipe.ks = crypto.NewKKInitiator(d.identityKey, dst)
 
 	msg.Data = pipe.ks.Start(nil, nil)
+
+	pipe.lock.Unlock()
 
 	log.Debugf("%s opening sync encrypted pipe", d.desc())
 
@@ -246,6 +268,47 @@ var (
 	ErrClosed      = errors.New("closed pipe")
 )
 
+func (p *Pipe) resendLoop() {
+	tick := time.NewTicker(p.resendInterval / 2)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-tick.C:
+			p.resendUnacked(p.lifetime)
+		case <-p.lifetime.Done():
+			return
+		}
+	}
+}
+
+func (p *Pipe) resendUnacked(ctx context.Context) error {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if len(p.unackedMessages) == 0 {
+		return nil
+	}
+
+	log.Debugf("%s considering %d messages for resend", p.handler.desc(), len(p.unackedMessages))
+	defer log.Debugf("%s finished with resends", p.handler.desc())
+
+	now := time.Now()
+
+	for _, uk := range p.unackedMessages {
+		if uk.next.Before(now) {
+			err := p.handler.sender.SendData(ctx, p.other, p.handler.peerProto, uk.msg)
+			if err != nil {
+				return err
+			}
+
+			uk.next = now.Add(p.resendInterval)
+		}
+	}
+
+	return nil
+}
+
 func (p *Pipe) Send(ctx context.Context, data []byte) error {
 	p.lock.Lock()
 	defer p.lock.Unlock()
@@ -255,6 +318,7 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 	}
 
 	for p.blockForAcks() {
+		log.Debugf("blocking for ack space")
 		p.cond.Wait()
 	}
 
@@ -284,6 +348,9 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 
 		msg.Type = PIPE_DATA
 	}
+
+	log.Debugf("%s adding %d to unacked", p.handler.desc(), msg.SeqId)
+	p.unackedMessages = append(p.unackedMessages, unackedMessage{&msg, time.Now().Add(p.resendInterval)})
 
 	return p.handler.sender.SendData(ctx, p.other, p.handler.peerProto, &msg)
 }

@@ -17,7 +17,7 @@ import (
 func TestPipe(t *testing.T) {
 	n := neko.Modern(t)
 
-	n.It("perfoms a handshake to connect a pipe", func(t *testing.T) {
+	n.It("performs a handshake to connect a pipe", func(t *testing.T) {
 		var (
 			h1 DataHandler
 			s1 util.SendAdapter
@@ -31,6 +31,9 @@ func TestPipe(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 
@@ -40,7 +43,7 @@ func TestPipe(t *testing.T) {
 		lp, err := h1.ListenPipe("test")
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
 		var wg sync.WaitGroup
@@ -50,15 +53,17 @@ func TestPipe(t *testing.T) {
 			defer wg.Done()
 
 			p1, err := lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				return
+			}
 
-			err = p1.Send(ctx, []byte("hello"))
-			require.NoError(t, err)
+			p1.Send(ctx, []byte("hello"))
 		}()
 
 		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
 		require.NoError(t, err)
 
+		log.Debugf("receiving")
 		recv, err := p2.Recv(ctx)
 		require.NoError(t, err)
 
@@ -81,6 +86,9 @@ func TestPipe(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 
@@ -93,6 +101,8 @@ func TestPipe(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
+		recvs := make(chan string, 1)
+
 		var wg sync.WaitGroup
 
 		wg.Add(1)
@@ -100,11 +110,13 @@ func TestPipe(t *testing.T) {
 			defer wg.Done()
 
 			p1, err := lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				recvs <- ""
+				return
+			}
 
 			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			recvs <- string(recv)
 		}()
 
 		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
@@ -114,6 +126,8 @@ func TestPipe(t *testing.T) {
 		require.NoError(t, err)
 
 		wg.Wait()
+
+		assert.Equal(t, "hello", <-recvs)
 	})
 
 	n.It("ignores duplicate messages receieved", func(t *testing.T) {
@@ -129,6 +143,9 @@ func TestPipe(t *testing.T) {
 
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
 
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
@@ -147,16 +164,21 @@ func TestPipe(t *testing.T) {
 			p1 *Pipe
 		)
 
+		recvs := make(chan string, 1)
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
+			var err error
 			p1, err = lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				recvs <- ""
+				return
+			}
 
-			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			recv, _ := p1.Recv(ctx)
+			recvs <- string(recv)
 		}()
 
 		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
@@ -177,6 +199,8 @@ func TestPipe(t *testing.T) {
 
 		assert.Equal(t, max, len(s1.Messages))
 		assert.Equal(t, 0, len(p1.message))
+
+		assert.Equal(t, "hello", <-recvs)
 	})
 
 	n.It("reorders messages before delivering them", func(t *testing.T) {
@@ -194,6 +218,9 @@ func TestPipe(t *testing.T) {
 
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
 
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
@@ -214,20 +241,26 @@ func TestPipe(t *testing.T) {
 			p1 *Pipe
 		)
 
+		recvs := make(chan string, 2)
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
+			var err error
+
 			p1, err = lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				recvs <- ""
+				recvs <- ""
+				return
+			}
 
-			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			recv, _ := p1.Recv(ctx)
+			recvs <- string(recv)
 
-			recv, err = p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "world", string(recv))
+			recv, _ = p1.Recv(ctx)
+			recvs <- string(recv)
 		}()
 
 		rh.PassThrough = true
@@ -248,6 +281,9 @@ func TestPipe(t *testing.T) {
 		rh.Deliver()
 
 		wg.Wait()
+
+		assert.Equal(t, "hello", <-recvs)
+		assert.Equal(t, "world", <-recvs)
 	})
 
 	n.It("can deal with an out-of-order 0-rrt open", func(t *testing.T) {
@@ -265,6 +301,9 @@ func TestPipe(t *testing.T) {
 
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
 
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
@@ -331,6 +370,9 @@ func TestPipe(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 		s2.Sync = true
@@ -341,7 +383,7 @@ func TestPipe(t *testing.T) {
 		lp, err := h1.ListenPipe("test")
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		var (
@@ -353,8 +395,7 @@ func TestPipe(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			p1, err = lp.Accept(ctx)
-			require.NoError(t, err)
+			p1, _ = lp.Accept(ctx)
 		}()
 
 		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
@@ -396,6 +437,9 @@ func TestPipe(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 		s2.Sync = true
@@ -415,28 +459,34 @@ func TestPipe(t *testing.T) {
 			p1 *Pipe
 		)
 
+		recvs := make(chan string, 4)
+
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 
+			var err error
+
 			p1, err = lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				recvs <- ""
+				recvs <- ""
+				recvs <- ""
+				recvs <- ""
+				return
+			}
 
-			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			recv, _ := p1.Recv(ctx)
+			recvs <- string(recv)
 
-			recv, err = p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "world", string(recv))
+			recv, _ = p1.Recv(ctx)
+			recvs <- string(recv)
 
-			recv, err = p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "again", string(recv))
+			recv, _ = p1.Recv(ctx)
+			recvs <- string(recv)
 
-			recv, err = p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "friends", string(recv))
+			recv, _ = p1.Recv(ctx)
+			recvs <- string(recv)
 		}()
 
 		rh.PassThrough = true
@@ -464,6 +514,11 @@ func TestPipe(t *testing.T) {
 		rh.DeliverAsStored()
 
 		wg.Wait()
+
+		assert.Equal(t, "hello", <-recvs)
+		assert.Equal(t, "world", <-recvs)
+		assert.Equal(t, "again", <-recvs)
+		assert.Equal(t, "friends", <-recvs)
 	})
 
 	n.Meow()
@@ -486,6 +541,9 @@ func TestPipeAck(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 
@@ -498,6 +556,8 @@ func TestPipeAck(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
+		recvs := make(chan string, 1)
+
 		var wg sync.WaitGroup
 
 		wg.Add(1)
@@ -505,11 +565,13 @@ func TestPipeAck(t *testing.T) {
 			defer wg.Done()
 
 			p1, err := lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				recvs <- ""
+				return
+			}
 
-			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			recv, _ := p1.Recv(ctx)
+			recvs <- string(recv)
 		}()
 
 		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
@@ -520,9 +582,12 @@ func TestPipeAck(t *testing.T) {
 
 		wg.Wait()
 
-		require.True(t, len(s1.Messages) > 0)
+		time.Sleep(100 * time.Millisecond)
 
-		msg := s1.Messages[len(s1.Messages)-1].Message.(*Message)
+		sent := s1.At(-1)
+		require.NotNil(t, sent)
+
+		msg := sent.Message.(*Message)
 
 		assert.Equal(t, PIPE_DATA_ACK, msg.Type)
 
@@ -531,7 +596,9 @@ func TestPipeAck(t *testing.T) {
 
 		assert.True(t, msg.AckId > 0)
 
+		p2.lock.Lock()
 		assert.Equal(t, p2.recvThreshold, msg.AckId)
+		p2.lock.Unlock()
 	})
 
 	n.It("suspends sending until acks are received", func(t *testing.T) {
@@ -550,6 +617,9 @@ func TestPipeAck(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 
@@ -557,7 +627,7 @@ func TestPipeAck(t *testing.T) {
 		s1.Handler = &qh
 		s2.Handler = &h1
 
-		qh.PassThrough = true
+		qh.SetPassthrough(true)
 
 		lp, err := h1.ListenPipe("test")
 		require.NoError(t, err)
@@ -574,16 +644,16 @@ func TestPipeAck(t *testing.T) {
 			p1, err := lp.Accept(ctx)
 			require.NoError(t, err)
 
-			qh.PassThrough = false
+			time.Sleep(100 * time.Millisecond)
 
-			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			qh.SetPassthrough(false)
+
+			p1.Recv(ctx)
 		}()
 
 		h2.AckBacklog = 1
 
-		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
 		require.NoError(t, err)
 
 		err = p2.Send(ctx, []byte("hello"))
@@ -591,13 +661,21 @@ func TestPipeAck(t *testing.T) {
 
 		time.Sleep(100 * time.Millisecond)
 
+		p2.lock.Lock()
 		assert.True(t, p2.blockForAcks())
+		p2.lock.Unlock()
+
+		time.Sleep(time.Second)
 
 		go qh.Deliver(1)
 
 		time.Sleep(100 * time.Millisecond)
 
+		p2.lock.Lock()
 		assert.False(t, p2.blockForAcks())
+		p2.lock.Unlock()
+
+		wg.Wait()
 	})
 
 	n.It("unblocks a send when an ack arrives", func(t *testing.T) {
@@ -616,6 +694,9 @@ func TestPipeAck(t *testing.T) {
 		h1.Setup(2, &s1, k1)
 		h2.Setup(2, &s2, k2)
 
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
 		s1.Sender = k1.Identity()
 		s2.Sender = k2.Identity()
 
@@ -631,6 +712,8 @@ func TestPipeAck(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
+		recvs := make(chan string, 2)
+
 		var wg sync.WaitGroup
 
 		wg.Add(1)
@@ -638,25 +721,28 @@ func TestPipeAck(t *testing.T) {
 			defer wg.Done()
 
 			p1, err := lp.Accept(ctx)
-			require.NoError(t, err)
+			if err != nil {
+				recvs <- ""
+				recvs <- ""
+				return
+			}
 
-			qh.PassThrough = false
+			time.Sleep(100 * time.Millisecond)
+			qh.SetPassthrough(false)
 
 			log.Debugf("begin recv phase")
 
-			recv, err := p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "hello", string(recv))
+			recv, _ := p1.Recv(ctx)
+			recvs <- string(recv)
 
 			log.Debugf("waiting on 2")
-			recv, err = p1.Recv(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, "2", string(recv))
+			recv, _ = p1.Recv(ctx)
+			recvs <- string(recv)
 		}()
 
 		h2.AckBacklog = 1
 
-		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
 		require.NoError(t, err)
 
 		err = p2.Send(ctx, []byte("hello"))
@@ -690,6 +776,98 @@ func TestPipeAck(t *testing.T) {
 
 		assert.NoError(t, serr)
 		assert.True(t, diff >= 100*time.Millisecond)
+
+		assert.Equal(t, "hello", <-recvs)
+		assert.Equal(t, "2", <-recvs)
+	})
+
+	n.It("retransmits lost messages eventually", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+
+			qh util.QueueHandler
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		qh.Handler = &h2
+		s1.Handler = &qh
+		s2.Handler = &h1
+
+		qh.PassThrough = true
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		recvs := make(chan string, 2)
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err := lp.Accept(ctx)
+			if err != nil {
+				recvs <- ""
+				recvs <- ""
+				return
+			}
+
+			time.Sleep(100 * time.Millisecond)
+			qh.SetPassthrough(false)
+
+			log.Debugf("begin recv phase")
+
+			recv, _ := p1.Recv(ctx)
+			recvs <- string(recv)
+
+			log.Debugf("waiting on 2")
+			recv, _ = p1.Recv(ctx)
+			recvs <- string(recv)
+		}()
+
+		h2.AckBacklog = 1
+
+		p2, err := h2.LazyConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("hello"))
+		require.NoError(t, err)
+
+		before := s2.Size()
+
+		time.Sleep(ResendInterval * 2)
+
+		log.Debugf("sending 2")
+		err = p2.Send(ctx, []byte("2"))
+		require.NoError(t, err)
+
+		log.Debugf("chceking messages")
+
+		assert.Equal(t, before+1, s2.Size())
+
+		qh.Deliver(3)
+
+		time.Sleep(ResendInterval * 2)
+
+		assert.Equal(t, before+1, s2.Size())
 	})
 
 	n.Meow()
