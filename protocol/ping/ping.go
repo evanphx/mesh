@@ -10,19 +10,15 @@ import (
 	"github.com/evanphx/mesh/pb"
 )
 
-type Sender interface {
-	SendData(context.Context, mesh.Identity, int32, interface{}) error
-}
-
 type Handler struct {
 	proto    int32
-	sender   Sender
+	sender   mesh.Sender
 	lock     sync.Mutex
 	nextSess uint64
 	pings    map[uint64]chan struct{}
 }
 
-func (h *Handler) Setup(proto int32, sender Sender) {
+func (h *Handler) Setup(proto int32, sender mesh.Sender) {
 	h.pings = make(map[uint64]chan struct{})
 	h.proto = proto
 	h.sender = sender

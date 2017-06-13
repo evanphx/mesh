@@ -2,138 +2,26 @@ package peer
 
 import (
 	"context"
-	"log"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/evanphx/mesh/auth"
+	"github.com/evanphx/mesh/log"
+	"github.com/evanphx/mesh/pb"
+	"github.com/evanphx/mesh/protocol/ping"
+	"github.com/evanphx/mesh/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vektra/neko"
 )
 
 func TestPeer(t *testing.T) {
-	n := neko.Start(t)
+	n := neko.Modern(t)
 
-	n.NIt("negotates an encrypted session", func() {
-		ib, rb := pairByteTraders()
+	n.It("exchanges routes on full start (forced order)", func(t *testing.T) {
+		ld := util.NewLocalAdvertisements()
+		lr := util.NewLocalRoutes()
 
-		a, err := auth.NewAuthorizer("test")
-		require.NoError(t, err)
-
-		i, err := InitNewPeer()
-		require.NoError(t, err)
-
-		defer i.Shutdown()
-
-		i.Authorize(a)
-
-		r, err := InitNewPeer()
-		require.NoError(t, err)
-
-		defer r.Shutdown()
-
-		r.Authorize(a)
-
-		var (
-			is Session
-			rs Session
-
-			ipeer Identity
-			rpeer Identity
-		)
-
-		var wg sync.WaitGroup
-
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-
-			var err error
-
-			is, err = i.BeginHandshake("test", ib)
-			require.NoError(t, err)
-
-			ipeer = is.PeerIdentity()
-		}()
-
-		go func() {
-			defer wg.Done()
-
-			var err error
-
-			rs, err = r.WaitHandshake(rb)
-			require.NoError(t, err)
-
-			rpeer = rs.PeerIdentity()
-		}()
-
-		wg.Wait()
-
-		ct := is.Encrypt([]byte("hello"), nil)
-		pt, err := rs.Decrypt(ct, nil)
-		require.NoError(t, err)
-
-		assert.Equal(t, "hello", string(pt))
-
-		assert.True(t, ipeer.Equal(r.Identity()))
-		assert.True(t, rpeer.Equal(i.Identity()))
-	})
-
-	n.NIt("errors out if the peers aren't authorized", func() {
-		ib, rb := pairByteTraders()
-
-		a, err := auth.NewAuthorizer("t1")
-		require.NoError(t, err)
-
-		b, err := auth.NewAuthorizer("t1")
-		require.NoError(t, err)
-
-		i, err := InitNewPeer()
-		require.NoError(t, err)
-
-		defer i.Shutdown()
-
-		i.Authorize(a)
-
-		r, err := InitNewPeer()
-		require.NoError(t, err)
-
-		defer r.Shutdown()
-
-		r.Authorize(b)
-
-		var wg sync.WaitGroup
-
-		wg.Add(2)
-
-		go func() {
-			defer wg.Done()
-			defer ib.Close(context.TODO())
-
-			var err error
-
-			_, err = i.BeginHandshake("t1", ib)
-			assert.Equal(t, err, ErrInvalidCred)
-		}()
-
-		go func() {
-			defer wg.Done()
-			defer rb.Close(context.TODO())
-
-			var err error
-
-			_, err = r.WaitHandshake(rb)
-			assert.Equal(t, err, ErrInvalidCred)
-		}()
-
-		wg.Wait()
-	})
-
-	n.It("exchanges routes on full start (forced order)", func() {
-		ab, ba := pairByteTraders()
+		ab, ba := util.PairByteTraders()
 
 		a, err := InitNewPeer()
 		require.NoError(t, err)
@@ -145,19 +33,29 @@ func TestPeer(t *testing.T) {
 
 		defer b.Shutdown()
 
-		bc, cb := pairByteTraders()
+		bc, cb := util.PairByteTraders()
 
 		c, err := InitNewPeer()
 		require.NoError(t, err)
 
 		defer c.Shutdown()
 
-		cd, dc := pairByteTraders()
+		cd, dc := util.PairByteTraders()
 
 		d, err := InitNewPeer()
 		require.NoError(t, err)
 
 		defer d.Shutdown()
+
+		a.adverOps = ld.AddNode(a.Identity(), a)
+		b.adverOps = ld.AddNode(b.Identity(), b)
+		c.adverOps = ld.AddNode(c.Identity(), c)
+		d.adverOps = ld.AddNode(d.Identity(), d)
+
+		a.routeOps = lr.AddNode(a.Identity(), a)
+		b.routeOps = lr.AddNode(b.Identity(), b)
+		c.routeOps = lr.AddNode(c.Identity(), c)
+		d.routeOps = lr.AddNode(d.Identity(), d)
 
 		a.AttachPeer(b.Identity(), ab)
 		time.Sleep(100 * time.Millisecond)
@@ -178,8 +76,11 @@ func TestPeer(t *testing.T) {
 		assert.Equal(t, hop.Neighbor, c.Identity().String())
 	})
 
-	n.It("sends out route updates on new attachments", func() {
-		ab, ba := pairByteTraders()
+	n.It("sends out route updates on new attachments", func(t *testing.T) {
+		ld := util.NewLocalAdvertisements()
+		lr := util.NewLocalRoutes()
+
+		ab, ba := util.PairByteTraders()
 
 		a, err := InitNewPeer()
 		require.NoError(t, err)
@@ -193,7 +94,7 @@ func TestPeer(t *testing.T) {
 
 		defer b.Shutdown()
 
-		bc, cb := pairByteTraders()
+		bc, cb := util.PairByteTraders()
 
 		c, err := InitNewPeer()
 		require.NoError(t, err)
@@ -201,13 +102,23 @@ func TestPeer(t *testing.T) {
 
 		defer c.Shutdown()
 
-		cd, dc := pairByteTraders()
+		cd, dc := util.PairByteTraders()
 
 		d, err := InitNewPeer()
 		require.NoError(t, err)
 		d.Name = "d"
 
 		defer d.Shutdown()
+
+		a.adverOps = ld.AddNode(a.Identity(), a)
+		b.adverOps = ld.AddNode(b.Identity(), b)
+		c.adverOps = ld.AddNode(c.Identity(), c)
+		d.adverOps = ld.AddNode(d.Identity(), d)
+
+		a.routeOps = lr.AddNode(a.Identity(), a)
+		b.routeOps = lr.AddNode(b.Identity(), b)
+		c.routeOps = lr.AddNode(c.Identity(), c)
+		d.routeOps = lr.AddNode(d.Identity(), d)
 
 		b.AttachPeer(c.Identity(), bc)
 		c.AttachPeer(b.Identity(), cb)
@@ -238,6 +149,154 @@ func TestPeer(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, hop.Neighbor, c.Identity().String())
+	})
+
+	n.It("routes messages between peers", func(t *testing.T) {
+		ld := util.NewLocalAdvertisements()
+		lr := util.NewLocalRoutes()
+
+		ab, ba := util.PairByteTraders()
+
+		a, err := InitNewPeer()
+		require.NoError(t, err)
+		a.Name = "a"
+
+		defer a.Shutdown()
+
+		b, err := InitNewPeer()
+		require.NoError(t, err)
+		b.Name = "b"
+
+		a.adverOps = ld.AddNode(a.Identity(), a)
+		b.adverOps = ld.AddNode(b.Identity(), b)
+
+		a.routeOps = lr.AddNode(a.Identity(), a)
+		b.routeOps = lr.AddNode(b.Identity(), b)
+
+		var pa ping.Handler
+		var pb ping.Handler
+
+		pa.Setup(1, a)
+		pb.Setup(1, b)
+
+		a.AddProtocol(1, &pa)
+		b.AddProtocol(1, &pb)
+
+		defer b.Shutdown()
+
+		a.AttachPeer(b.Identity(), ab)
+		time.Sleep(100 * time.Millisecond)
+		b.AttachPeer(a.Identity(), ba)
+		time.Sleep(100 * time.Millisecond)
+
+		ctx := context.Background()
+
+		dur, err := pa.Ping(ctx, b.Identity())
+		require.NoError(t, err)
+
+		t.Log(dur)
+
+		assert.True(t, dur > 0)
+	})
+
+	n.It("broadcasts advertisments", func(t *testing.T) {
+		ld := util.NewLocalAdvertisements()
+		lr := util.NewLocalRoutes()
+
+		ab, ba := util.PairByteTraders()
+
+		a, err := InitNewPeer()
+		require.NoError(t, err)
+		a.Name = "a"
+
+		defer a.Shutdown()
+
+		b, err := InitNewPeer()
+		require.NoError(t, err)
+		b.Name = "b"
+
+		a.adverOps = ld.AddNode(a.Identity(), a)
+		b.adverOps = ld.AddNode(b.Identity(), b)
+
+		a.routeOps = lr.AddNode(a.Identity(), a)
+		b.routeOps = lr.AddNode(b.Identity(), b)
+
+		defer b.Shutdown()
+
+		a.AttachPeer(b.Identity(), ab)
+		time.Sleep(100 * time.Millisecond)
+		b.AttachPeer(a.Identity(), ba)
+		time.Sleep(100 * time.Millisecond)
+
+		ad := &pb.Advertisement{}
+		ad.Pipe = "test"
+
+		err = a.Advertise(ad)
+		require.NoError(t, err)
+
+		time.Sleep(100 * time.Millisecond)
+
+		ads, err := b.AllAdvertisements()
+		require.NoError(t, err)
+
+		require.True(t, len(ads) > 0)
+
+		assert.Equal(t, "test", ads[0].Pipe)
+	})
+
+	n.It("drops adverts when a connection drops", func(t *testing.T) {
+		ld := util.NewLocalAdvertisements()
+		lr := util.NewLocalRoutes()
+
+		ab, ba := util.PairByteTraders()
+
+		a, err := InitNewPeer()
+		require.NoError(t, err)
+		a.Name = "a"
+
+		defer a.Shutdown()
+
+		b, err := InitNewPeer()
+		require.NoError(t, err)
+		b.Name = "b"
+
+		a.adverOps = ld.AddNode(a.Identity(), a)
+		b.adverOps = ld.AddNode(b.Identity(), b)
+
+		a.routeOps = lr.AddNode(a.Identity(), a)
+		b.routeOps = lr.AddNode(b.Identity(), b)
+
+		defer b.Shutdown()
+
+		a.AttachPeer(b.Identity(), ab)
+		time.Sleep(100 * time.Millisecond)
+		b.AttachPeer(a.Identity(), ba)
+		time.Sleep(100 * time.Millisecond)
+
+		ad := &pb.Advertisement{}
+		ad.Pipe = "test"
+
+		err = a.Advertise(ad)
+		require.NoError(t, err)
+
+		time.Sleep(100 * time.Millisecond)
+
+		ads, err := b.AllAdvertisements()
+		require.NoError(t, err)
+
+		require.True(t, len(ads) > 0)
+
+		assert.Equal(t, "test", ads[0].Pipe)
+
+		ctx := context.Background()
+
+		ab.Close(ctx)
+
+		time.Sleep(100 * time.Millisecond)
+
+		ads, err = b.AllAdvertisements()
+		require.NoError(t, err)
+		require.True(t, len(ads) == 0)
 	})
 
 	n.Meow()

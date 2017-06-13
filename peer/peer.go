@@ -5,17 +5,16 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 
 	"golang.org/x/crypto/ed25519"
 
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/auth"
 	"github.com/evanphx/mesh/grpc"
+	"github.com/evanphx/mesh/pb"
 	"github.com/evanphx/mesh/router"
 	"github.com/flynn/noise"
 	"github.com/pkg/errors"
@@ -32,16 +31,11 @@ type Network struct {
 }
 
 type Neighbor struct {
-	Id Identity
+	Id mesh.Identity
 	tr ByteTransport
 }
 
 const DefaultPipeBacklog = 10
-
-type pipeKey struct {
-	ep string
-	id uint64
-}
 
 type Peer struct {
 	Name        string
@@ -51,18 +45,11 @@ type Peer struct {
 
 	networks map[string]*Network
 
-	lock        sync.Mutex
-	router      *router.Router
-	connections *Connections
-
-	pipeLock  sync.Mutex
-	listening map[string]*ListenPipe
-	pipes     map[pipeKey]*Pipe
+	lock   sync.Mutex
+	router *router.Router
 
 	neighLock sync.Mutex
 	neighbors map[string]*Neighbor
-
-	nextSession *uint64
 
 	rpcServer *grpc.Server
 
@@ -70,12 +57,14 @@ type Peer struct {
 	shutdown func()
 	opChan   chan operation
 
-	pingLock sync.Mutex
-	pings    map[uint64]chan struct{}
-
 	adverLock  sync.Mutex
 	advers     map[string]*localAdver
-	selfAdvers map[string]*Advertisement
+	selfAdvers map[string]*pb.Advertisement
+	adverOps   AdvertisementOps
+	routeOps   RouteOps
+
+	protoLock sync.RWMutex
+	protocols map[int32]Protocol
 }
 
 func (p *Peer) Desc() string {
@@ -95,15 +84,39 @@ func InitNewPeer() (*Peer, error) {
 		router:      router.NewRouter(),
 		neighbors:   make(map[string]*Neighbor),
 		networks:    make(map[string]*Network),
-		listening:   make(map[string]*ListenPipe),
-		pipes:       make(map[pipeKey]*Pipe),
 		rpcServer:   grpc.NewServer(),
 		opChan:      make(chan operation),
-		pings:       make(map[uint64]chan struct{}),
-		nextSession: new(uint64),
 		advers:      make(map[string]*localAdver),
-		selfAdvers:  make(map[string]*Advertisement),
-		connections: DefaultConnections,
+		selfAdvers:  make(map[string]*pb.Advertisement),
+		protocols:   make(map[int32]Protocol),
+	}
+
+	peer.run()
+
+	return peer, nil
+}
+
+type PeerConfig struct {
+	AdvertisementOps AdvertisementOps
+	RouteOps         RouteOps
+}
+
+func InitNew(cfg PeerConfig) (*Peer, error) {
+	id := CipherSuite.GenerateKeypair(RNG)
+
+	peer := &Peer{
+		PipeBacklog: DefaultPipeBacklog,
+		identityKey: id,
+		router:      router.NewRouter(),
+		neighbors:   make(map[string]*Neighbor),
+		networks:    make(map[string]*Network),
+		rpcServer:   grpc.NewServer(),
+		opChan:      make(chan operation),
+		advers:      make(map[string]*localAdver),
+		selfAdvers:  make(map[string]*pb.Advertisement),
+		protocols:   make(map[int32]Protocol),
+		adverOps:    cfg.AdvertisementOps,
+		routeOps:    cfg.RouteOps,
 	}
 
 	peer.run()
@@ -146,11 +159,8 @@ func InitPeerFromDir(dir string) (*Peer, error) {
 		router:      router.NewRouter(),
 		neighbors:   make(map[string]*Neighbor),
 		networks:    make(map[string]*Network),
-		listening:   make(map[string]*ListenPipe),
-		pipes:       make(map[pipeKey]*Pipe),
 		rpcServer:   grpc.NewServer(),
 		opChan:      make(chan operation),
-		connections: DefaultConnections,
 	}
 
 	peer.identityKey.Public, err = hex.DecodeString(ps.IdentityKey.Public)
@@ -210,18 +220,18 @@ func (p *Peer) SaveToDir(dir string) error {
 	return json.NewEncoder(f).Encode(&ps)
 }
 
-func (p *Peer) AddNeighbor(id Identity, tr ByteTransport) {
+func (p *Peer) AddNeighbor(id mesh.Identity, tr ByteTransport) {
 	p.opChan <- neighborAdd{id, tr}
 }
 
 func (p *Peer) AddSession(sess mesh.Session) {
-	p.opChan <- neighborAdd{Identity(sess.PeerIdentity()), sess}
+	p.opChan <- neighborAdd{sess.PeerIdentity(), sess}
 }
 
-func (p *Peer) AddRoute(neigh, dest Identity) {
-	var update RouteUpdate
+func (p *Peer) AddRoute(neigh, dest mesh.Identity) {
+	var update pb.RouteUpdate
 	update.Neighbor = neigh
-	update.Routes = append(update.Routes, &Route{
+	update.Routes = append(update.Routes, &pb.Route{
 		Destination: dest,
 		Weight:      1,
 	})
@@ -229,8 +239,8 @@ func (p *Peer) AddRoute(neigh, dest Identity) {
 	p.opChan <- routeUpdate{update: &update, prop: true}
 }
 
-func (p *Peer) Identity() Identity {
-	return Identity(p.identityKey.Public)
+func (p *Peer) Identity() mesh.Identity {
+	return mesh.Identity(p.identityKey.Public)
 }
 
 func (p *Peer) StaticKey() noise.DHKey {
@@ -280,7 +290,7 @@ type ByteTransport interface {
 }
 
 type Session interface {
-	PeerIdentity() Identity
+	PeerIdentity() mesh.Identity
 
 	Send(ctx context.Context, msg []byte) error
 	Recv(ctx context.Context, out []byte) ([]byte, error)
@@ -290,7 +300,7 @@ type Session interface {
 }
 
 type noiseSession struct {
-	peerIdentity Identity
+	peerIdentity mesh.Identity
 
 	tr ByteTransport
 
@@ -298,7 +308,7 @@ type noiseSession struct {
 	writeCS *noise.CipherState
 }
 
-func (n *noiseSession) PeerIdentity() Identity {
+func (n *noiseSession) PeerIdentity() mesh.Identity {
 	return n.peerIdentity
 }
 
@@ -368,7 +378,7 @@ func (p *Peer) BeginHandshake(netName string, tr ByteTransport) (Session, error)
 		return nil, ErrInvalidCred
 	}
 
-	sess := &noiseSession{Identity(rkey), tr, csR, csW}
+	sess := &noiseSession{mesh.Identity(rkey), tr, csR, csW}
 
 	p.AddNeighbor(sess.peerIdentity, sess)
 
@@ -422,31 +432,14 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 		return nil, ErrInvalidCred
 	}
 
-	sess := &noiseSession{Identity(rkey), tr, csR, csW}
+	sess := &noiseSession{mesh.Identity(rkey), tr, csR, csW}
 
 	p.AddNeighbor(sess.peerIdentity, sess)
 
 	return sess, nil
 }
 
-func (p *Peer) sendMessage(ctx context.Context, dst Identity, t Header_Type, s uint64, body []byte) error {
-	var hdr Header
-
-	hdr.Destination = dst
-	hdr.Sender = p.identityKey.Public
-	hdr.Type = t
-	hdr.Session = s
-	hdr.Body = body
-
-	data, err := hdr.Marshal()
-	if err != nil {
-		return err
-	}
-
-	return p.forward(ctx, &hdr, data)
-}
-
-func (p *Peer) send(ctx context.Context, hdr *Header) error {
+func (p *Peer) send(ctx context.Context, hdr *pb.Header) error {
 	hdr.Sender = p.identityKey.Public
 
 	data, err := hdr.Marshal()
@@ -460,7 +453,6 @@ func (p *Peer) send(ctx context.Context, hdr *Header) error {
 func (p *Peer) run() {
 	p.lifetime, p.shutdown = context.WithCancel(context.Background())
 
-	go p.ListenForRPC(p.lifetime)
 	go p.handleOperations(p.lifetime)
 }
 
@@ -468,77 +460,8 @@ func (p *Peer) Shutdown() {
 	p.shutdown()
 }
 
-func (p *Peer) AttachPeer(id Identity, tr ByteTransport) {
+func (p *Peer) AttachPeer(id mesh.Identity, tr ByteTransport) {
 	go p.Monitor(p.lifetime, id, tr)
 
 	p.AddNeighbor(id, tr)
-}
-
-func (p *Peer) Ping(ctx context.Context, id Identity) (time.Duration, error) {
-	sess := p.sessionId(id)
-
-	c := make(chan struct{})
-
-	p.pingLock.Lock()
-	p.pings[sess] = c
-	p.pingLock.Unlock()
-
-	var hdr Header
-
-	hdr.Sender = p.Identity()
-	hdr.Destination = id
-	hdr.Type = PING
-	hdr.Session = sess
-
-	sent := time.Now()
-
-	err := p.send(ctx, &hdr)
-	if err != nil {
-		return 0, err
-	}
-
-	var ret time.Duration
-
-	select {
-	case <-c:
-		ret = time.Since(sent)
-		err = nil
-	case <-ctx.Done():
-		err = ctx.Err()
-	}
-
-	p.pingLock.Lock()
-	delete(p.pings, sess)
-	p.pingLock.Unlock()
-
-	// Do a quick drain of c in case the ping came in after we
-	// timed out but before we got to the lock.
-	select {
-	case <-c:
-	default:
-	}
-
-	return ret, err
-}
-
-func (p *Peer) processPong(hdr *Header) {
-	log.Printf("%s process pong", p.Desc())
-
-	p.pingLock.Lock()
-
-	c, ok := p.pings[hdr.Session]
-
-	p.pingLock.Unlock()
-
-	if ok {
-		select {
-		case c <- struct{}{}:
-			// all good
-		default:
-			// omg super fast response
-			go func() {
-				c <- struct{}{}
-			}()
-		}
-	}
 }
