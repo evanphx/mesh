@@ -6,7 +6,7 @@ import (
 
 type SeqNum uint64
 
-type Reliable struct {
+type WindowTracker struct {
 	lock      sync.Mutex
 	seqNo     SeqNum
 	threshold SeqNum
@@ -26,8 +26,8 @@ type Config struct {
 	WindowBytes int
 }
 
-func NewReliable(cfg Config) *Reliable {
-	return &Reliable{
+func NewWindowTracker(cfg Config) *WindowTracker {
+	return &WindowTracker{
 		slots:     make([][]byte, cfg.WindowSlots),
 		curWindow: cfg.WindowBytes,
 		maxWindow: cfg.WindowBytes,
@@ -38,11 +38,11 @@ func (s SeqNum) After(i SeqNum) bool {
 	return s > i
 }
 
-func (r *Reliable) slotNumber(s SeqNum) int {
+func (r *WindowTracker) slotNumber(s SeqNum) int {
 	return int(s - r.threshold - 1)
 }
 
-func (r *Reliable) Queue(b []byte) (SeqNum, bool) {
+func (r *WindowTracker) Queue(b []byte) (SeqNum, bool) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -68,7 +68,7 @@ func (r *Reliable) Queue(b []byte) (SeqNum, bool) {
 	return next, true
 }
 
-func (r *Reliable) Ack(n SeqNum) error {
+func (r *WindowTracker) Ack(n SeqNum) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -91,7 +91,7 @@ func (r *Reliable) Ack(n SeqNum) error {
 	return nil
 }
 
-func (r *Reliable) Retrieve(n SeqNum) ([]byte, bool) {
+func (r *WindowTracker) Retrieve(n SeqNum) ([]byte, bool) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
@@ -107,7 +107,7 @@ func (r *Reliable) Retrieve(n SeqNum) ([]byte, bool) {
 	return r.slots[slot], true
 }
 
-func (r *Reliable) Outstanding() (SeqNum, SeqNum, bool) {
+func (r *WindowTracker) Outstanding() (SeqNum, SeqNum, bool) {
 	if r.seqNo == r.threshold {
 		return 0, 0, false
 	}

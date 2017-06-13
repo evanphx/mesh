@@ -8,7 +8,7 @@ import (
 	"github.com/vektra/neko"
 )
 
-func TestReliable(t *testing.T) {
+func TestWindowTracker(t *testing.T) {
 	n := neko.Modern(t)
 
 	cfg := Config{
@@ -17,7 +17,7 @@ func TestReliable(t *testing.T) {
 	}
 
 	n.It("takes a byte slice and returns a seq number for it", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		n, ok := r.Queue([]byte("foo"))
 		require.True(t, ok)
@@ -26,7 +26,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("indicates that it can not queue more data", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		for i := 0; i < QueueSlots; i++ {
 			_, ok := r.Queue([]byte("foo"))
@@ -38,7 +38,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("clears slots when ack'd", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		n, ok := r.Queue([]byte("foo"))
 		assert.True(t, ok)
@@ -61,7 +61,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("treats acks cummulatively", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		_, ok := r.Queue([]byte("foo"))
 		assert.True(t, ok)
@@ -83,7 +83,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("ignores acks for message already seen", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		n, ok := r.Queue([]byte("foo"))
 		require.True(t, ok)
@@ -106,7 +106,7 @@ func TestReliable(t *testing.T) {
 			WindowBytes: 10,
 		}
 
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		n, ok := r.Queue([]byte("foo"))
 		assert.True(t, ok)
@@ -128,7 +128,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("can retrieve the data for a seq number", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		data := []byte("foo")
 
@@ -142,7 +142,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("will not retrieve data for ack'd seq numbers", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		data := []byte("foo")
 
@@ -157,7 +157,7 @@ func TestReliable(t *testing.T) {
 	})
 
 	n.It("returns the range out outstanding ack's", func(t *testing.T) {
-		r := NewReliable(cfg)
+		r := NewWindowTracker(cfg)
 
 		_, _, ok := r.Outstanding()
 		require.False(t, ok)
