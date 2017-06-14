@@ -22,7 +22,8 @@ const MaxAckBacklog = 20
 
 type Resolver interface {
 	LookupSelector(*mesh.PipeSelector) (mesh.Identity, string, error)
-	RemoveAdvertisement(*pb.Advertisement)
+	Advertise(*pb.Advertisement) error
+	RemoveAdvertisement(*pb.Advertisement) error
 }
 
 type pipeKey struct {
@@ -72,6 +73,10 @@ func (d *DataHandler) Setup(proto int32, s mesh.Sender, k crypto.DHKey) {
 	d.unknownDatas = make(map[uint64][]unknownData)
 
 	go d.invalidateUnknowns()
+}
+
+func (d *DataHandler) SetResolver(r Resolver) {
+	d.resolver = r
 }
 
 func (d *DataHandler) Cleanup() {

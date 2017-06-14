@@ -41,6 +41,23 @@ func (p *Peer) Advertise(ad *pb.Advertisement) error {
 	return nil
 }
 
+func (p *Peer) RemoveAdvertisement(ad *pb.Advertisement) error {
+	if ad.Owner == nil {
+		ad.Owner = p.Identity()
+	}
+
+	if ad.Id == "" {
+		ad.Id = uuid.NewV4().String()
+	}
+
+	if ad.TimeToLive == 0 {
+		ad.TimeToLive = DefaultTTL
+	}
+
+	p.opChan <- removeAdver{ad}
+	return nil
+}
+
 func (p *Peer) AllAdvertisements() ([]*pb.Advertisement, error) {
 	p.adverLock.Lock()
 	defer p.adverLock.Unlock()

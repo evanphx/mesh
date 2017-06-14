@@ -13,6 +13,7 @@ import (
 
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/auth"
+	"github.com/evanphx/mesh/crypto"
 	"github.com/evanphx/mesh/grpc"
 	"github.com/evanphx/mesh/pb"
 	"github.com/evanphx/mesh/router"
@@ -41,7 +42,7 @@ type Peer struct {
 	Name        string
 	PipeBacklog int
 
-	identityKey noise.DHKey
+	identityKey crypto.DHKey
 
 	networks map[string]*Network
 
@@ -76,7 +77,7 @@ func (p *Peer) Desc() string {
 }
 
 func InitNewPeer() (*Peer, error) {
-	id := CipherSuite.GenerateKeypair(RNG)
+	id := crypto.GenerateKey()
 
 	peer := &Peer{
 		PipeBacklog: DefaultPipeBacklog,
@@ -102,7 +103,7 @@ type PeerConfig struct {
 }
 
 func InitNew(cfg PeerConfig) (*Peer, error) {
-	id := CipherSuite.GenerateKeypair(RNG)
+	id := crypto.GenerateKey()
 
 	peer := &Peer{
 		PipeBacklog: DefaultPipeBacklog,
@@ -243,7 +244,7 @@ func (p *Peer) Identity() mesh.Identity {
 	return mesh.Identity(p.identityKey.Public)
 }
 
-func (p *Peer) StaticKey() noise.DHKey {
+func (p *Peer) StaticKey() crypto.DHKey {
 	return p.identityKey
 }
 
@@ -333,6 +334,7 @@ func (n *noiseSession) Recv(ctx context.Context, out []byte) ([]byte, error) {
 	return n.readCS.Decrypt(out, nil, buf)
 }
 
+/*
 func (p *Peer) BeginHandshake(netName string, tr ByteTransport) (Session, error) {
 	hs := noise.NewHandshakeState(noise.Config{
 		CipherSuite:   CipherSuite,
@@ -438,6 +440,7 @@ func (p *Peer) WaitHandshake(tr ByteTransport) (Session, error) {
 
 	return sess, nil
 }
+*/
 
 func (p *Peer) send(ctx context.Context, hdr *pb.Header) error {
 	hdr.Sender = p.identityKey.Public

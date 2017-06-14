@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/evanphx/mesh/log"
-	"github.com/evanphx/mesh/pb"
 	"github.com/evanphx/mesh/protocol/ping"
 	"github.com/evanphx/mesh/util"
 	"github.com/stretchr/testify/assert"
@@ -197,106 +196,6 @@ func TestPeer(t *testing.T) {
 		t.Log(dur)
 
 		assert.True(t, dur > 0)
-	})
-
-	n.It("broadcasts advertisments", func(t *testing.T) {
-		ld := util.NewLocalAdvertisements()
-		lr := util.NewLocalRoutes()
-
-		ab, ba := util.PairByteTraders()
-
-		a, err := InitNewPeer()
-		require.NoError(t, err)
-		a.Name = "a"
-
-		defer a.Shutdown()
-
-		b, err := InitNewPeer()
-		require.NoError(t, err)
-		b.Name = "b"
-
-		a.adverOps = ld.AddNode(a.Identity(), a)
-		b.adverOps = ld.AddNode(b.Identity(), b)
-
-		a.routeOps = lr.AddNode(a.Identity(), a)
-		b.routeOps = lr.AddNode(b.Identity(), b)
-
-		defer b.Shutdown()
-
-		a.AttachPeer(b.Identity(), ab)
-		time.Sleep(100 * time.Millisecond)
-		b.AttachPeer(a.Identity(), ba)
-		time.Sleep(100 * time.Millisecond)
-
-		ad := &pb.Advertisement{}
-		ad.Pipe = "test"
-
-		err = a.Advertise(ad)
-		require.NoError(t, err)
-
-		time.Sleep(100 * time.Millisecond)
-
-		ads, err := b.AllAdvertisements()
-		require.NoError(t, err)
-
-		require.True(t, len(ads) > 0)
-
-		assert.Equal(t, "test", ads[0].Pipe)
-	})
-
-	n.It("drops adverts when a connection drops", func(t *testing.T) {
-		ld := util.NewLocalAdvertisements()
-		lr := util.NewLocalRoutes()
-
-		ab, ba := util.PairByteTraders()
-
-		a, err := InitNewPeer()
-		require.NoError(t, err)
-		a.Name = "a"
-
-		defer a.Shutdown()
-
-		b, err := InitNewPeer()
-		require.NoError(t, err)
-		b.Name = "b"
-
-		a.adverOps = ld.AddNode(a.Identity(), a)
-		b.adverOps = ld.AddNode(b.Identity(), b)
-
-		a.routeOps = lr.AddNode(a.Identity(), a)
-		b.routeOps = lr.AddNode(b.Identity(), b)
-
-		defer b.Shutdown()
-
-		a.AttachPeer(b.Identity(), ab)
-		time.Sleep(100 * time.Millisecond)
-		b.AttachPeer(a.Identity(), ba)
-		time.Sleep(100 * time.Millisecond)
-
-		ad := &pb.Advertisement{}
-		ad.Pipe = "test"
-
-		err = a.Advertise(ad)
-		require.NoError(t, err)
-
-		time.Sleep(100 * time.Millisecond)
-
-		ads, err := b.AllAdvertisements()
-		require.NoError(t, err)
-
-		require.True(t, len(ads) > 0)
-
-		assert.Equal(t, "test", ads[0].Pipe)
-
-		ctx := context.Background()
-
-		ab.Close(ctx)
-
-		time.Sleep(100 * time.Millisecond)
-
-		ads, err = b.AllAdvertisements()
-		require.NoError(t, err)
-		require.True(t, len(ads) == 0)
 	})
 
 	n.Meow()

@@ -154,6 +154,10 @@ func (d *DataHandler) Listen(adver *pb.Advertisement) (*ListenPipe, error) {
 
 	d.listening[name] = lp
 
+	if d.resolver != nil {
+		d.resolver.Advertise(adver)
+	}
+
 	log.Debugf("listen pipe created: %s", name)
 
 	return lp, nil
