@@ -21,8 +21,11 @@ func (p *Peer) drive(ctx context.Context, neigh mesh.Identity, tr ByteTransport)
 	for {
 		msg, err = tr.Recv(ctx, msg)
 		if err != nil {
-			if err == mesh.ErrClosed {
-				p.opChan <- neighborLeft{neigh}
+			p.opChan <- neighborLeft{neigh}
+
+			if err != mesh.ErrClosed {
+				log.Debugf("! Error receiving message: %s (%T)", err, err)
+				return err
 			}
 
 			return nil
@@ -36,6 +39,8 @@ func (p *Peer) drive(ctx context.Context, neigh mesh.Identity, tr ByteTransport)
 }
 
 func (p *Peer) Monitor(ctx context.Context, id mesh.Identity, tr ByteTransport) {
+	defer tr.Close(ctx)
+
 	err := p.drive(ctx, id, tr)
 	if err != nil {
 		log.Printf("%s Error monitoring transport: %s", p.Desc(), err)

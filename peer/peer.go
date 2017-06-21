@@ -272,7 +272,7 @@ func (p *Peer) CredsFor(bnet string) []byte {
 	return net.cred
 }
 
-func (p *Peer) Validate(bnet string, key, rcred []byte) bool {
+func (p *Peer) Validate(bnet string, key mesh.Identity, rcred []byte) bool {
 	net, ok := p.networks[bnet]
 	if !ok {
 		// If we don't have this network and the remote side presented
@@ -290,6 +290,7 @@ func (p *Peer) Validate(bnet string, key, rcred []byte) bool {
 type ByteTransport interface {
 	Send(context.Context, []byte) error
 	Recv(context.Context, []byte) ([]byte, error)
+	Close(context.Context) error
 }
 
 type Session interface {

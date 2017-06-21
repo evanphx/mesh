@@ -7,7 +7,7 @@ import (
 )
 
 func (i *Instance) ListenTCP(addr string) (*net.TCPAddr, error) {
-	a, err := transport.ListenTCP(i.lifetime, i.Peer, i, addr)
+	a, err := transport.ListenTCP(i.lifetime, i.Peer, i.validator, addr)
 	if err != nil {
 		return nil, err
 	}

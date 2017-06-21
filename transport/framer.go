@@ -9,10 +9,17 @@ import (
 	"io"
 	"sync"
 
+	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/log"
 )
 
+type framerIO interface {
+	io.ReadWriter
+	Close(context.Context) error
+}
+
 type framer struct {
+	top framerIO
 	r   *bufio.Reader
 	w   *bufio.Writer
 	sz1 []byte
@@ -22,11 +29,16 @@ type framer struct {
 	wmu sync.Mutex
 }
 
-func NewFramer(bt io.ReadWriter) Messenger {
+func NewFramer(bt framerIO) Messenger {
 	return &framer{
-		r: bufio.NewReader(bt),
-		w: bufio.NewWriter(bt),
+		top: bt,
+		r:   bufio.NewReader(bt),
+		w:   bufio.NewWriter(bt),
 	}
+}
+
+func (f *framer) Close(ctx context.Context) error {
+	return f.top.Close(ctx)
 }
 
 const maxSzBuf = 12
@@ -74,6 +86,10 @@ func (f *framer) Recv(ctx context.Context, buf []byte) ([]byte, error) {
 
 	_, err := io.ReadFull(f.r, sz2)
 	if err != nil {
+		if err == io.EOF {
+			return nil, mesh.ErrClosed
+		}
+
 		return nil, err
 	}
 

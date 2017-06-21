@@ -43,7 +43,8 @@ func (i *Instance) ConnectTo(str string) error {
 }
 
 func TCPDialer(p *peer.Peer, u *url.URL) error {
-	return transport.ConnectTCP(context.TODO(), p, p, u.Host, u.Path)
+	_, err := transport.ConnectTCP(context.TODO(), p, p, u.Host, u.Path)
+	return err
 }
 
 func UTPDialer(p *peer.Peer, u *url.URL) error {
@@ -65,5 +66,15 @@ func init() {
 }
 
 func (i *Instance) ConnectTCP(ctx context.Context, addr, net string) error {
-	return transport.ConnectTCP(ctx, i.Peer, i, addr, net)
+	mon, err := transport.ConnectTCP(ctx, i.Peer, i.validator, addr, net)
+	if err != nil {
+		return err
+	}
+
+	mon.OnClose(func(sctx context.Context) error {
+		go i.ConnectTCP(ctx, addr, net)
+		return nil
+	})
+
+	return nil
 }

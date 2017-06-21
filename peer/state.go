@@ -2,6 +2,7 @@ package peer
 
 import (
 	"context"
+	"fmt"
 	"runtime"
 	"time"
 
@@ -101,6 +102,16 @@ func (o neighborLeft) OpType() string {
 	return "neighbor-left"
 }
 
+type printStatus struct{}
+
+func (p printStatus) OpType() string {
+	return "print-status"
+}
+
+func (p *Peer) PrintStatus() {
+	p.opChan <- printStatus{}
+}
+
 func (p *Peer) handleOperations(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -146,6 +157,11 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		if err != nil {
 			log.Printf("Error in protocol handler %T: %s", ph, err)
 			// TODO send back an error message?
+		}
+
+	case printStatus:
+		for _, neigh := range p.neighbors {
+			fmt.Printf("Neighbor: %s => %T\n", neigh.Id.Short(), neigh.tr)
 		}
 
 	case neighborAdd:

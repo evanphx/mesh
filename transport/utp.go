@@ -22,7 +22,11 @@ func ConnectUTP(ctx context.Context, l Peer, v Validator, host, netName string) 
 		return err
 	}
 
-	sess, err := connectHS(ctx, l, netName, v, NewFramer(conn))
+	mon := &closeMonitor{
+		ReadWriteCloser: conn,
+	}
+
+	sess, err := connectHS(ctx, l, netName, v, NewFramer(mon))
 	if err != nil {
 		conn.Close()
 		return err

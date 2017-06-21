@@ -10,4 +10,6 @@ type Session interface {
 
 	Encrypt(msg, out []byte) []byte
 	Decrypt(msg, out []byte) ([]byte, error)
+
+	Close(ctx context.Context) error
 }

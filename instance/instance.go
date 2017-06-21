@@ -2,13 +2,17 @@ package instance
 
 import (
 	"context"
+	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/grpc"
 	"github.com/evanphx/mesh/peer"
 	"github.com/evanphx/mesh/protocol/ping"
 	"github.com/evanphx/mesh/protocol/pipe"
+	"github.com/evanphx/mesh/transport"
 )
 
 type Instance struct {
@@ -25,6 +29,8 @@ type Instance struct {
 	rpcServer *grpc.Server
 
 	connections *Connections
+
+	validator transport.Validator
 }
 
 func InitNew() (*Instance, error) {
@@ -33,6 +39,7 @@ func InitNew() (*Instance, error) {
 	i := &Instance{
 		lifetime:       ctx,
 		lifetimeCancel: cancel,
+		validator:      NoCreds{},
 	}
 
 	p, err := peer.InitNew(peer.PeerConfig{
@@ -69,4 +76,22 @@ func (i *Instance) Identity() mesh.Identity {
 
 func (i *Instance) Shutdown() {
 	i.Peer.Shutdown()
+}
+
+func (i *Instance) StaticTokenAuth(network, token string) {
+	i.validator = &StaticCreds{network, token}
+}
+
+func (i *Instance) ProvideInfo() {
+	ch := make(chan os.Signal, 1)
+
+	signal.Notify(ch, syscall.SIGINFO, syscall.SIGUSR1)
+
+	go func() {
+		for {
+			<-ch
+
+			i.Peer.PrintStatus()
+		}
+	}()
 }

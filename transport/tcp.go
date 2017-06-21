@@ -4,7 +4,10 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"io"
 	"net"
+	"sync"
+	"time"
 
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/crypto"
@@ -31,7 +34,7 @@ type Peer interface {
 }
 
 type Validator interface {
-	Validate(net string, key, cred []byte) bool
+	Validate(net string, peer mesh.Identity, cred []byte) bool
 	CredsFor(net string) []byte
 }
 
@@ -42,6 +45,40 @@ func ListenTCP(pctx context.Context, p Peer, v Validator, addr string) (net.Addr
 	}
 
 	return listen(pctx, p, v, l)
+}
+
+type closeMonitor struct {
+	io.ReadWriteCloser
+
+	mu      sync.Mutex
+	onClose []func(context.Context) error
+}
+
+func (c *closeMonitor) Close(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var merr error
+
+	for _, f := range c.onClose {
+		err := f(ctx)
+		if err != nil && merr != nil {
+			merr = err
+		}
+	}
+
+	return merr
+}
+
+func (c *closeMonitor) OnClose(f func(context.Context) error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.onClose = append(c.onClose, f)
+}
+
+type CloseMonitor interface {
+	OnClose(f func(context.Context) error)
 }
 
 func listen(pctx context.Context, p Peer, v Validator, l net.Listener) (net.Addr, error) {
@@ -68,7 +105,11 @@ func listen(pctx context.Context, p Peer, v Validator, l net.Listener) (net.Addr
 				l.Close()
 				return
 			case c := <-conns:
-				go Handshake(pctx, p, v, NewFramer(c))
+				mon := &closeMonitor{
+					ReadWriteCloser: c,
+				}
+
+				go Handshake(pctx, p, v, NewFramer(mon))
 			}
 		}
 	}()
@@ -79,6 +120,7 @@ func listen(pctx context.Context, p Peer, v Validator, l net.Listener) (net.Addr
 type Messenger interface {
 	Send(context.Context, []byte) error
 	Recv(context.Context, []byte) ([]byte, error)
+	Close(context.Context) error
 }
 
 func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger) {
@@ -94,8 +136,6 @@ func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger) {
 func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Session, error) {
 	hs := crypto.NewXXResponder(p.StaticKey())
 
-	log.Printf("performing accept handshake")
-
 	buf, err := tr.Recv(ctx, make([]byte, 256))
 	if err != nil {
 		return nil, err
@@ -106,7 +146,7 @@ func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Sess
 		return nil, err
 	}
 
-	msg := hs.Prime(nil, nil)
+	msg := hs.Prime(nil, v.CredsFor(string(bnetName)))
 
 	err = tr.Send(ctx, msg)
 	if err != nil {
@@ -139,26 +179,41 @@ func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Sess
 	return sess, nil
 }
 
-func ConnectTCP(ctx context.Context, l Peer, v Validator, host, netName string) error {
-	conn, err := net.Dial("tcp", host)
-	if err != nil {
-		return err
+const RetryTimes = 100
+
+func ConnectTCP(ctx context.Context, l Peer, v Validator, host, netName string) (CloseMonitor, error) {
+	var (
+		conn net.Conn
+		err  error
+	)
+
+	for i := 0; i < RetryTimes; i++ {
+		conn, err = net.Dial("tcp", host)
+		if err == nil {
+			break
+		}
+
+		log.Printf("Unable to connect to %s, retrying (%s)", host, err)
+
+		time.Sleep(1 * time.Second)
 	}
 
-	sess, err := connectHS(ctx, l, netName, v, NewFramer(conn))
+	mon := &closeMonitor{
+		ReadWriteCloser: conn,
+	}
+
+	sess, err := connectHS(ctx, l, netName, v, NewFramer(mon))
 	if err != nil {
 		conn.Close()
-		return err
+		return nil, err
 	}
 
 	l.AddSession(sess)
 
-	return nil
+	return mon, nil
 }
 
 func connectHS(ctx context.Context, p Peer, net string, v Validator, tr Messenger) (mesh.Session, error) {
-	log.Printf("performing connect handshake")
-
 	hs := crypto.NewXXInitiator(p.StaticKey())
 
 	msg := hs.Start(nil, []byte(net))

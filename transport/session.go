@@ -56,3 +56,7 @@ func (n *noiseSession) Recv(ctx context.Context, out []byte) ([]byte, error) {
 
 	return msg, nil
 }
+
+func (n *noiseSession) Close(ctx context.Context) error {
+	return n.tr.Close(ctx)
+}
