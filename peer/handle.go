@@ -38,7 +38,7 @@ func (p *Peer) drive(ctx context.Context, neigh mesh.Identity, tr ByteTransport)
 func (p *Peer) Monitor(ctx context.Context, id mesh.Identity, tr ByteTransport) {
 	err := p.drive(ctx, id, tr)
 	if err != nil {
-		log.Printf("Error monitoring transport: %s", err)
+		log.Printf("%s Error monitoring transport: %s", p.Desc(), err)
 	}
 }
 

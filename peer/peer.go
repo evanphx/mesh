@@ -226,6 +226,8 @@ func (p *Peer) AddNeighbor(id mesh.Identity, tr ByteTransport) {
 }
 
 func (p *Peer) AddSession(sess mesh.Session) {
+	go p.Monitor(p.lifetime, sess.PeerIdentity(), sess)
+
 	p.opChan <- neighborAdd{sess.PeerIdentity(), sess}
 }
 

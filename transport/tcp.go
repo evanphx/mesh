@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/evanphx/mesh"
+	"github.com/evanphx/mesh/crypto"
 	"github.com/evanphx/mesh/log"
 	"github.com/flynn/noise"
 )
@@ -26,7 +27,7 @@ var (
 
 type Peer interface {
 	AddSession(sess mesh.Session)
-	StaticKey() noise.DHKey
+	StaticKey() crypto.DHKey
 }
 
 type Validator interface {
@@ -91,13 +92,7 @@ func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger) {
 }
 
 func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Session, error) {
-	hs := noise.NewHandshakeState(noise.Config{
-		CipherSuite:   CipherSuite,
-		Random:        RNG,
-		Pattern:       noise.HandshakeXX,
-		StaticKeypair: p.StaticKey(),
-		Prologue:      Prologue,
-	})
+	hs := crypto.NewXXResponder(p.StaticKey())
 
 	log.Printf("performing accept handshake")
 
@@ -106,12 +101,12 @@ func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Sess
 		return nil, err
 	}
 
-	bnetName, _, _, err := hs.ReadMessage(nil, buf)
+	bnetName, err := hs.Start(nil, buf)
 	if err != nil {
 		return nil, err
 	}
 
-	msg, _, _ := hs.WriteMessage(nil, v.CredsFor(string(bnetName)))
+	msg := hs.Prime(nil, nil)
 
 	err = tr.Send(ctx, msg)
 	if err != nil {
@@ -123,18 +118,23 @@ func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Sess
 		return nil, err
 	}
 
-	rcred, csW, csR, err := hs.ReadMessage(nil, buf)
+	rcred, csW, csR, err := hs.Finish(nil, buf)
 	if err != nil {
 		return nil, err
 	}
 
-	rkey := hs.PeerStatic()
+	rkey := hs.Peer()
 
 	if !v.Validate(string(bnetName), rkey, rcred) {
 		return nil, ErrInvalidCred
 	}
 
-	sess := &noiseSession{mesh.Identity(rkey), tr, csR, csW}
+	sess := &noiseSession{
+		peerIdentity: rkey,
+		tr:           tr,
+		readCS:       csR,
+		writeCS:      csW,
+	}
 
 	return sess, nil
 }
@@ -159,16 +159,9 @@ func ConnectTCP(ctx context.Context, l Peer, v Validator, host, netName string) 
 func connectHS(ctx context.Context, p Peer, net string, v Validator, tr Messenger) (mesh.Session, error) {
 	log.Printf("performing connect handshake")
 
-	hs := noise.NewHandshakeState(noise.Config{
-		CipherSuite:   CipherSuite,
-		Random:        RNG,
-		Pattern:       noise.HandshakeXX,
-		Initiator:     true,
-		StaticKeypair: p.StaticKey(),
-		Prologue:      Prologue,
-	})
+	hs := crypto.NewXXInitiator(p.StaticKey())
 
-	msg, _, _ := hs.WriteMessage(nil, []byte(net))
+	msg := hs.Start(nil, []byte(net))
 
 	err := tr.Send(ctx, msg)
 	if err != nil {
@@ -180,25 +173,30 @@ func connectHS(ctx context.Context, p Peer, net string, v Validator, tr Messenge
 		return nil, err
 	}
 
-	rcred, _, _, err := hs.ReadMessage(nil, buf)
+	rcred, err := hs.Prime(nil, buf)
 	if err != nil {
 		return nil, err
 	}
 
-	msg, csR, csW := hs.WriteMessage(nil, v.CredsFor(net))
+	msg, csR, csW := hs.Finish(nil, v.CredsFor(net))
 
 	err = tr.Send(ctx, msg)
 	if err != nil {
 		return nil, err
 	}
 
-	rkey := hs.PeerStatic()
+	rkey := hs.Peer()
 
 	if !v.Validate(net, rkey, rcred) {
 		return nil, ErrInvalidCred
 	}
 
-	sess := &noiseSession{mesh.Identity(rkey), tr, csR, csW}
+	sess := &noiseSession{
+		peerIdentity: rkey,
+		tr:           tr,
+		readCS:       csR,
+		writeCS:      csW,
+	}
 
 	return sess, nil
 }

@@ -403,7 +403,11 @@ func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 	select {
 	case m, ok := <-p.message:
 		if !ok {
-			return nil, p.err
+			p.lock.Lock()
+			err := p.err
+			p.lock.Unlock()
+
+			return nil, err
 		}
 
 		if m.data != nil {

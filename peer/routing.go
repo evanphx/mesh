@@ -6,6 +6,7 @@ import (
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/log"
 	"github.com/evanphx/mesh/pb"
+	"github.com/evanphx/mesh/router"
 )
 
 func (p *Peer) reachable(id mesh.Identity) bool {
@@ -15,6 +16,10 @@ func (p *Peer) reachable(id mesh.Identity) bool {
 	}
 
 	return true
+}
+
+func (p *Peer) LookupRoute(dest mesh.Identity) (router.Hop, error) {
+	return p.router.Lookup(dest.String())
 }
 
 type RouteOps interface {

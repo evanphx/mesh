@@ -25,6 +25,11 @@ func (l *localAdver) valid(t time.Time) bool {
 }
 
 func (p *Peer) Advertise(ad *pb.Advertisement) error {
+	// Don't advertise internal pipes
+	if ad.Pipe != "" && ad.Pipe[0] == ':' {
+		return nil
+	}
+
 	if ad.Owner == nil {
 		ad.Owner = p.Identity()
 	}
