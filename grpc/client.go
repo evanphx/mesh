@@ -1,6 +1,10 @@
 package grpc
 
-import "context"
+import (
+	"context"
+
+	"github.com/evanphx/mesh/log"
+)
 
 // CallOption configures a Call before it starts or extracts information from
 // a Call after it completes.
@@ -22,13 +26,26 @@ func NewClientConn(tr Transport) *ClientConn {
 }
 
 type ClientStream interface {
-	SendRequest(ctx context.Context, args interface{}) error
-	ReadReply(ctx context.Context, reply interface{}) error
+	SendRequest(ctx context.Context) error
 	Close(ctx context.Context) error
+
+	SendMsg(m interface{}) error
+	RecvMsg(reply interface{}) error
+	CloseSend() error
+}
+
+func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, opts ...CallOption) (ClientStream, error) {
+	cs := &clientStream{ctx, cc.tr, method}
+	err := cs.SendRequest(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return cs, nil
 }
 
 func (cc *ClientConn) makeStream(ctx context.Context, method string) (ClientStream, error) {
-	return &clientStream{cc.tr, method}, nil
+	return &clientStream{ctx, cc.tr, method}, nil
 }
 
 // Invoke sends the RPC request on the wire and returns after response is received.
@@ -44,12 +61,19 @@ func invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 		return err
 	}
 
-	err = stream.SendRequest(ctx, args)
+	err = stream.SendRequest(ctx)
 	if err != nil {
 		return err
 	}
 
-	err = stream.ReadReply(ctx, reply)
+	log.Debugf("invoke sending args...")
+
+	err = stream.SendMsg(args)
+	if err != nil {
+		return err
+	}
+
+	err = stream.RecvMsg(reply)
 	if err != nil {
 		return err
 	}

@@ -7,6 +7,8 @@ message Frame {
     ERROR = 0;
     REQUEST = 1;
     REPLY = 2;
+    DATA = 3;
+    CLOSE_SEND = 4;
   }
 
   Type type = 1;

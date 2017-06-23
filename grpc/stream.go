@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"math"
 
 	"github.com/evanphx/mesh/log"
@@ -12,9 +13,10 @@ import (
 type Stream interface {
 	Method() string
 
-	RecvMsg(ctx context.Context, max int) ([]byte, error)
+	RecvData(ctx context.Context, max int) ([]byte, error)
+	RecvMsg(ctx context.Context, m interface{}) error
+	SendMsg(ctx context.Context, m interface{}) error
 	SendError(ctx context.Context, err error) error
-	SendReply(ctx context.Context, v interface{}) error
 
 	Close(ctx context.Context) error
 }
@@ -68,7 +70,7 @@ type Marshaler interface {
 
 var ErrInvalidValue = errors.New("invalid value type")
 
-func (b *ByteStream) SendReply(ctx context.Context, v interface{}) error {
+func (b *ByteStream) xSendReply(ctx context.Context, v interface{}) error {
 	m, ok := v.(Marshaler)
 	if !ok {
 		return ErrInvalidValue
@@ -81,6 +83,30 @@ func (b *ByteStream) SendReply(ctx context.Context, v interface{}) error {
 
 	frame := Frame{
 		Type: REPLY,
+		Body: body,
+	}
+
+	data, err := frame.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return b.t.Send(ctx, data)
+}
+
+func (b *ByteStream) SendMsg(ctx context.Context, v interface{}) error {
+	m, ok := v.(Marshaler)
+	if !ok {
+		return ErrInvalidValue
+	}
+
+	body, err := m.Marshal()
+	if err != nil {
+		return err
+	}
+
+	frame := Frame{
+		Type: DATA,
 		Body: body,
 	}
 
@@ -121,8 +147,47 @@ type serverStream struct {
 	tr    Transport
 }
 
-func (s *serverStream) RecvMsg(ctx context.Context, max int) ([]byte, error) {
-	return s.frame.Body, nil
+func (s *serverStream) RecvData(ctx context.Context, max int) ([]byte, error) {
+	var (
+		data []byte
+		err  error
+	)
+
+	data, err = s.tr.Recv(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var frame Frame
+
+	err = frame.Unmarshal(data)
+	if err != nil {
+		return nil, err
+	}
+
+	if frame.Type == ERROR {
+		return nil, fmt.Errorf("grpc remote error: %s", string(frame.Body))
+	}
+
+	if frame.Type != DATA {
+		return nil, fmt.Errorf("Invalid protocol state, expected REPLY, got %s", frame.Type)
+	}
+
+	return frame.Body, nil
+}
+
+func (s *serverStream) RecvMsg(ctx context.Context, reply interface{}) error {
+	data, err := s.RecvData(ctx, math.MaxUint32)
+	if err != nil {
+		return err
+	}
+
+	u, ok := reply.(Unmarshaler)
+	if !ok {
+		return ErrInvalidValue
+	}
+
+	return u.Unmarshal(data)
 }
 
 func (s *serverStream) SendError(ctx context.Context, err error) error {
@@ -141,7 +206,7 @@ func (s *serverStream) SendError(ctx context.Context, err error) error {
 	return s.tr.SendFinal(ctx, data)
 }
 
-func (s *serverStream) SendReply(ctx context.Context, v interface{}) error {
+func (s *serverStream) xSendReply(ctx context.Context, v interface{}) error {
 	m, ok := v.(Marshaler)
 	if !ok {
 		return ErrInvalidValue
@@ -165,21 +230,8 @@ func (s *serverStream) SendReply(ctx context.Context, v interface{}) error {
 	return s.tr.SendFinal(ctx, data)
 }
 
-func (s *serverStream) Method() string {
-	return s.frame.Method
-}
-
-func (s *serverStream) Close(ctx context.Context) error {
-	return s.tr.Close(ctx)
-}
-
-type clientStream struct {
-	tr     Transport
-	method string
-}
-
-func (s *clientStream) SendRequest(ctx context.Context, args interface{}) error {
-	m, ok := args.(Marshaler)
+func (s *serverStream) SendMsg(ctx context.Context, v interface{}) error {
+	m, ok := v.(Marshaler)
 	if !ok {
 		return ErrInvalidValue
 	}
@@ -191,8 +243,7 @@ func (s *clientStream) SendRequest(ctx context.Context, args interface{}) error 
 
 	var frame Frame
 
-	frame.Type = REQUEST
-	frame.Method = s.method
+	frame.Type = DATA
 	frame.Body = body
 
 	data, err := frame.Marshal()
@@ -203,8 +254,52 @@ func (s *clientStream) SendRequest(ctx context.Context, args interface{}) error 
 	return s.tr.Send(ctx, data)
 }
 
-func (s *clientStream) ReadReply(ctx context.Context, reply interface{}) error {
-	data, err := s.tr.Recv(ctx)
+func (s *serverStream) Method() string {
+	return s.frame.Method
+}
+
+func (s *serverStream) Close(ctx context.Context) error {
+	return s.tr.Close(ctx)
+}
+
+type clientStream struct {
+	ctx    context.Context
+	tr     Transport
+	method string
+}
+
+func (s *clientStream) SendMsg(arg interface{}) error {
+	m, ok := arg.(Marshaler)
+	if !ok {
+		return ErrInvalidValue
+	}
+
+	body, err := m.Marshal()
+	if err != nil {
+		return err
+	}
+
+	var frame Frame
+
+	frame.Type = DATA
+	frame.Body = body
+
+	data, err := frame.Marshal()
+	if err != nil {
+		return err
+	}
+
+	if err := arg.(Unmarshaler).Unmarshal(body); err != nil {
+		panic("what")
+	}
+
+	log.Debugf("client: SendMsg %d: %T -- %v", crc32.ChecksumIEEE(body), arg, arg)
+
+	return s.tr.Send(s.ctx, data)
+}
+
+func (s *clientStream) RecvMsg(reply interface{}) error {
+	data, err := s.tr.Recv(s.ctx)
 	if err != nil {
 		return err
 	}
@@ -220,8 +315,8 @@ func (s *clientStream) ReadReply(ctx context.Context, reply interface{}) error {
 		return fmt.Errorf("grpc remote error: %s", string(frame.Body))
 	}
 
-	if frame.Type != REPLY {
-		return fmt.Errorf("Invalid protocol state, expected REPLY, got %s", frame.Type)
+	if frame.Type != DATA {
+		return fmt.Errorf("Invalid protocol state, expected DATA, got %s", frame.Type)
 	}
 
 	u, ok := reply.(Unmarshaler)
@@ -232,6 +327,37 @@ func (s *clientStream) ReadReply(ctx context.Context, reply interface{}) error {
 	return u.Unmarshal(frame.Body)
 }
 
+func (s *clientStream) SendRequest(ctx context.Context) error {
+	var frame Frame
+
+	frame.Type = REQUEST
+	frame.Method = s.method
+
+	data, err := frame.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return s.tr.Send(ctx, data)
+}
+
 func (s *clientStream) Close(ctx context.Context) error {
 	return s.tr.Close(ctx)
+}
+
+func (s *clientStream) CloseSend() error {
+	return nil
+	log.Debugf("sending CloseSend")
+
+	var frame Frame
+
+	frame.Type = CLOSE_SEND
+	frame.Method = s.method
+
+	data, err := frame.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return s.tr.Send(s.ctx, data)
 }

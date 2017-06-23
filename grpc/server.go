@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"math"
 	"strings"
@@ -41,9 +42,14 @@ type MethodDesc struct {
 	Handler    HandlerFunc
 }
 
+type ServerStream interface {
+	RecvMsg(reply interface{}) error
+	SendMsg(reply interface{}) error
+}
+
 // StreamHandler defines the handler called by gRPC server to complete the
 // execution of a streaming RPC.
-type StreamHandler func(srv interface{}, stream Stream) error
+type StreamHandler func(srv interface{}, stream ServerStream) error
 
 // StreamDesc represents a streaming RPC service's method specification.
 type StreamDesc struct {
@@ -127,6 +133,11 @@ func (s *Server) HandleTransport(ctx context.Context, tr Transport) {
 		return
 	}
 
+	if frame.Type != REQUEST {
+		log.Printf("Invalid opening frame type: %s", frame.Type)
+		tr.Close(ctx)
+	}
+
 	ss := &serverStream{
 		frame: &frame,
 		tr:    tr,
@@ -170,12 +181,12 @@ func (s *Server) handleStream(ctx context.Context, stream Stream) {
 		return
 	}
 
-	/*
-		if sd, ok := srv.sd[method]; ok {
-			s.processStreamingRPC(t, stream, srv, sd, trInfo)
-			return
-		}
-	*/
+	if sd, ok := srv.sd[method]; ok {
+		log.Debugf("dispatching streaming: %s", sd.StreamName)
+		s.lock.Unlock()
+		s.processStreamingRPC(ctx, stream, srv, sd)
+		return
+	}
 
 	log.Debugf("unknown method: %s", method)
 	stream.SendError(ctx, fmt.Errorf("unknown method %v", method))
@@ -187,7 +198,7 @@ type Unmarshaler interface {
 }
 
 func (s *Server) processUnaryRPC(ctx context.Context, stream Stream, srv *service, md *MethodDesc) (err error) {
-	req, err := stream.RecvMsg(ctx, math.MaxInt32)
+	req, err := stream.RecvData(ctx, math.MaxInt32)
 
 	if err != nil {
 		log.Debugf("recvMsg error: %s", err)
@@ -209,13 +220,45 @@ func (s *Server) processUnaryRPC(ctx context.Context, stream Stream, srv *servic
 
 	pbUnmarshal := func(v interface{}) error {
 		if m, ok := v.(Unmarshaler); ok {
-			return m.Unmarshal(req)
+			err := m.Unmarshal(req)
+			if err != nil {
+				log.Debugf("Unable to unmarshal %d for %T", crc32.ChecksumIEEE(req), v)
+			}
+			return err
 		}
 
 		return fmt.Errorf("Invalid request type: %T", v)
 	}
 
 	reply, appErr := md.Handler(srv.server, ctx, pbUnmarshal, nil)
+	if appErr != nil {
+		log.Debugf("handler reported error for %s: %s", md.MethodName, appErr)
+		err = stream.SendError(ctx, appErr)
+		if appErr != nil {
+			log.Printf("mesh-grpc: Error sending err back to client: %s", err)
+		}
+
+		return appErr
+	}
+
+	return stream.SendMsg(ctx, reply)
+}
+
+type contextStream struct {
+	ctx    context.Context
+	stream Stream
+}
+
+func (s *contextStream) RecvMsg(reply interface{}) error {
+	return s.stream.RecvMsg(s.ctx, reply)
+}
+
+func (s *contextStream) SendMsg(reply interface{}) error {
+	return s.stream.SendMsg(s.ctx, reply)
+}
+
+func (s *Server) processStreamingRPC(ctx context.Context, stream Stream, srv *service, sd *StreamDesc) (err error) {
+	appErr := sd.Handler(srv.server, &contextStream{ctx, stream})
 	if appErr != nil {
 		err = stream.SendError(ctx, appErr)
 		if appErr != nil {
@@ -225,5 +268,5 @@ func (s *Server) processUnaryRPC(ctx context.Context, stream Stream, srv *servic
 		return appErr
 	}
 
-	return stream.SendReply(ctx, reply)
+	return nil
 }
