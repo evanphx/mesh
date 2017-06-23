@@ -289,10 +289,6 @@ func (s *clientStream) SendMsg(arg interface{}) error {
 		return err
 	}
 
-	if err := arg.(Unmarshaler).Unmarshal(body); err != nil {
-		panic("what")
-	}
-
 	log.Debugf("client: SendMsg %d: %T -- %v", crc32.ChecksumIEEE(body), arg, arg)
 
 	return s.tr.Send(s.ctx, data)
