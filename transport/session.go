@@ -6,11 +6,11 @@ import (
 
 	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/crypto"
-	"github.com/evanphx/mesh/log"
 )
 
 type noiseSession struct {
-	mu sync.Mutex
+	rmu sync.Mutex
+	wmu sync.Mutex
 
 	peerIdentity mesh.Identity
 
@@ -25,32 +25,37 @@ func (n *noiseSession) PeerIdentity() mesh.Identity {
 }
 
 func (n *noiseSession) Encrypt(out, msg []byte) []byte {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.wmu.Lock()
+	defer n.wmu.Unlock()
 
 	return n.writeCS.Encrypt(out, nil, msg)
 }
 
 func (n *noiseSession) Decrypt(out, msg []byte) ([]byte, error) {
-	n.mu.Lock()
-	defer n.mu.Unlock()
+	n.rmu.Lock()
+	defer n.rmu.Unlock()
 
 	return n.readCS.Decrypt(out, nil, msg)
 }
 
 func (n *noiseSession) Send(ctx context.Context, msg []byte) error {
-	return n.tr.Send(ctx, n.Encrypt(nil, msg))
+	n.wmu.Lock()
+	defer n.wmu.Unlock()
+
+	return n.tr.Send(ctx, n.writeCS.Encrypt(nil, nil, msg))
 }
 
 func (n *noiseSession) Recv(ctx context.Context, out []byte) ([]byte, error) {
+	n.rmu.Lock()
+	defer n.rmu.Unlock()
+
 	buf, err := n.tr.Recv(ctx, out)
 	if err != nil {
 		return nil, err
 	}
 
-	msg, err := n.Decrypt(nil, buf)
+	msg, err := n.readCS.Decrypt(nil, nil, buf)
 	if err != nil {
-		log.Printf("! decryption error: %s (%d)", err, len(msg))
 		return nil, err
 	}
 
