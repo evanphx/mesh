@@ -160,7 +160,11 @@ func (d *DataHandler) Unroutable(dest mesh.Identity) {
 
 	for _, e := range toClose {
 		log.Debugf("%s closing unroutable pipe to %s", d.desc(), dest.Short())
+		e.pipe.lock.Lock()
+
 		d.closePipeInAnger(e.pipe, e.key)
+
+		e.pipe.lock.Unlock()
 	}
 }
 
