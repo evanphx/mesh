@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/crc32"
+	"io"
 	"math"
-
-	"github.com/evanphx/mesh/log"
 )
 
 type Stream interface {
@@ -49,8 +47,6 @@ func (b *ByteStream) ReadReply(ctx context.Context, reply interface{}) error {
 }
 
 func (b *ByteStream) SendError(ctx context.Context, err error) error {
-	log.Debugf("sending error back: %s", err)
-
 	frame := Frame{
 		Type: ERROR,
 		Body: []byte(err.Error()),
@@ -143,11 +139,16 @@ func (b *ByteStream) SendRequest(ctx context.Context, v interface{}) error {
 }
 
 type serverStream struct {
-	frame *Frame
-	tr    Transport
+	frame      *Frame
+	tr         Transport
+	sendClosed bool
 }
 
 func (s *serverStream) RecvData(ctx context.Context, max int) ([]byte, error) {
+	if s.sendClosed {
+		return nil, io.EOF
+	}
+
 	var (
 		data []byte
 		err  error
@@ -167,6 +168,13 @@ func (s *serverStream) RecvData(ctx context.Context, max int) ([]byte, error) {
 
 	if frame.Type == ERROR {
 		return nil, fmt.Errorf("grpc remote error: %s", string(frame.Body))
+	}
+
+	if frame.Type == CLOSE_SEND {
+		// TODO do we need to deal with another goroutine also doing a recv and getting stuck
+		// waiting?
+		s.sendClosed = true
+		return nil, io.EOF
 	}
 
 	if frame.Type != DATA {
@@ -191,8 +199,6 @@ func (s *serverStream) RecvMsg(ctx context.Context, reply interface{}) error {
 }
 
 func (s *serverStream) SendError(ctx context.Context, err error) error {
-	log.Debugf("sending error back: %s", err)
-
 	var frame Frame
 
 	frame.Type = ERROR
@@ -289,8 +295,6 @@ func (s *clientStream) SendMsg(arg interface{}) error {
 		return err
 	}
 
-	log.Debugf("client: SendMsg %d: %T -- %v", crc32.ChecksumIEEE(body), arg, arg)
-
 	return s.tr.Send(s.ctx, data)
 }
 
@@ -342,9 +346,6 @@ func (s *clientStream) Close(ctx context.Context) error {
 }
 
 func (s *clientStream) CloseSend() error {
-	return nil
-	log.Debugf("sending CloseSend")
-
 	var frame Frame
 
 	frame.Type = CLOSE_SEND
