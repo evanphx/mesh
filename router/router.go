@@ -74,11 +74,22 @@ type Update struct {
 	Neighbor    string
 	Destination string
 	Weight      int
+	Prune       bool
 }
 
 func (r *Router) Update(u Update) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
+
+	if u.Prune {
+		neighbors, ok := r.routes[u.Destination]
+		if !ok {
+			return nil
+		}
+
+		delete(neighbors, u.Neighbor)
+		return nil
+	}
 
 	neighbors, ok := r.routes[u.Destination]
 	if !ok {

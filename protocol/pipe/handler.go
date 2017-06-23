@@ -139,6 +139,31 @@ func (d *DataHandler) sessionId(dest mesh.Identity) uint64 {
 	return sh.Sum64()
 }
 
+// Invoked when a previous destination is no longer available. This allows
+// us to close any pipes to that destination.
+func (d *DataHandler) Unroutable(dest mesh.Identity) {
+	d.pipeLock.Lock()
+	defer d.pipeLock.Unlock()
+
+	type ent struct {
+		key  pipeKey
+		pipe *Pipe
+	}
+
+	var toClose []ent
+
+	for key, pipe := range d.pipes {
+		if pipe.other.Equal(dest) {
+			toClose = append(toClose, ent{key, pipe})
+		}
+	}
+
+	for _, e := range toClose {
+		log.Debugf("%s closing unroutable pipe to %s", d.desc(), dest.Short())
+		d.closePipeInAnger(e.pipe, e.key)
+	}
+}
+
 func (d *DataHandler) Handle(ctx context.Context, hdr *pb.Header) error {
 	msg := new(Message)
 
@@ -403,6 +428,29 @@ func (d *DataHandler) drainWindow(ctx context.Context, pipe *Pipe) {
 
 	pipe.windowStart = 0
 	pipe.windowUsed = 0
+}
+
+func (d *DataHandler) closeUnroutablePipe(pipe *Pipe) {
+	d.pipeLock.Lock()
+	defer d.pipeLock.Unlock()
+
+	key := mkpipeKey(pipe.other, pipe.session)
+
+	delete(d.pipes, key)
+
+	pipe.lock.Lock()
+	defer pipe.lock.Unlock()
+
+	pipe.lifetimeCancel()
+
+	if pipe.closed {
+		return
+	}
+
+	pipe.err = ErrClosed
+	pipe.closed = true
+
+	close(pipe.message)
 }
 
 func (d *DataHandler) closePipeInAnger(pipe *Pipe, key pipeKey) {

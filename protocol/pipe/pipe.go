@@ -294,15 +294,28 @@ func (p *Pipe) resendUnacked(ctx context.Context) error {
 		return nil
 	}
 
-	log.Debugf("%s considering %d messages for resend", p.handler.desc(), len(p.unackedMessages))
-	defer log.Debugf("%s finished with resends", p.handler.desc())
+	var sent int
+
+	log.Debugf("%s considering %d messages for resend to %s", p.handler.desc(), len(p.unackedMessages), p.other.Short())
+	defer func() {
+		log.Debugf("%s finished with resends, sent %d", p.handler.desc(), sent)
+	}()
 
 	now := time.Now()
 
 	for _, uk := range p.unackedMessages {
 		if uk.next.Before(now) {
+			sent++
 			err := p.handler.sender.SendData(ctx, p.other, p.handler.peerProto, uk.msg)
 			if err != nil {
+				if err.Error() == "no route available" {
+					log.Debugf("%s closing unroutable pipe to %s", p.handler.desc(), p.other.Short())
+					p.unackedMessages = nil
+					go p.handler.closeUnroutablePipe(p)
+					return nil
+				}
+
+				log.Debugf("%s resend error: %s", p.handler.desc(), err)
 				return err
 			}
 

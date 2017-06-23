@@ -205,6 +205,21 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		p.router.PruneByHop(op.neigh.String())
 		log.Debugf("pruning neighbor advers: %s", op.neigh)
 		p.pruneNeighAdvers(op.neigh)
+
+		log.Debugf("broadcasting neighbor route lost")
+
+		var req pb.RouteUpdate
+
+		req.Neighbor = p.Identity()
+		req.Routes = append(req.Routes, &pb.Route{
+			Destination: op.neigh,
+			Prune:       true,
+		})
+
+		for _, neigh := range p.neighbors {
+			go p.sendNewRoute(p.lifetime, neigh.Id, &req)
+		}
+
 	case routeUpdate:
 		for _, route := range op.update.Routes {
 			// Skip routes advertise for us, we know where we are
@@ -212,18 +227,38 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 				continue
 			}
 
-			log.Debugf("%s ROUTE update from %s: %s => %d",
-				p.Desc(),
-				op.update.Neighbor.Short(),
-				route.Destination.Short(),
-				int(route.Weight)+1,
-			)
+			if route.Prune {
+				log.Debugf("%s prune that %s has %s", p.Desc(),
+					op.update.Neighbor.Short(),
+					route.Destination.Short(),
+				)
 
-			p.router.Update(router.Update{
-				Neighbor:    op.update.Neighbor.String(),
-				Destination: route.Destination.String(),
-				Weight:      int(route.Weight) + 1,
-			})
+				p.router.Update(router.Update{
+					Neighbor:    op.update.Neighbor.String(),
+					Destination: route.Destination.String(),
+					Prune:       true,
+				})
+
+				_, err := p.router.Lookup(route.Destination.String())
+				if err != nil {
+					for _, proto := range p.protocols {
+						proto.Unroutable(route.Destination)
+					}
+				}
+			} else {
+				log.Debugf("%s ROUTE update from %s: %s => %d",
+					p.Desc(),
+					op.update.Neighbor.Short(),
+					route.Destination.Short(),
+					int(route.Weight)+1,
+				)
+
+				p.router.Update(router.Update{
+					Neighbor:    op.update.Neighbor.String(),
+					Destination: route.Destination.String(),
+					Weight:      int(route.Weight) + 1,
+				})
+			}
 		}
 
 		if op.prop {

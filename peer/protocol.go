@@ -3,12 +3,14 @@ package peer
 import (
 	"context"
 
+	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/pb"
 	"github.com/pkg/errors"
 )
 
 type Protocol interface {
 	Handle(ctx context.Context, hdr *pb.Header) error
+	Unroutable(dest mesh.Identity)
 }
 
 var ErrExistingProtocol = errors.New("existing protocol registered")

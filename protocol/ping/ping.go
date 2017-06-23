@@ -24,6 +24,10 @@ func (h *Handler) Setup(proto int32, sender mesh.Sender) {
 	h.sender = sender
 }
 
+func (h *Handler) Unroutable(dest mesh.Identity) {
+	// handle
+}
+
 func (h *Handler) Handle(ctx context.Context, hdr *pb.Header) error {
 	var msg Message
 
