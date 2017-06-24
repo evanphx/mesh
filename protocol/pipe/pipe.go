@@ -453,11 +453,11 @@ func (p *Pipe) Close(ctx context.Context) error {
 		return nil
 	}
 
-	p.handler.pipeLock.Lock()
-
-	delete(p.handler.pipes, mkpipeKey(p.other, p.session))
-
-	p.handler.pipeLock.Unlock()
+	if len(p.unackedMessages) == 0 {
+		p.handler.pipeLock.Lock()
+		delete(p.handler.pipes, mkpipeKey(p.other, p.session))
+		p.handler.pipeLock.Unlock()
+	}
 
 	close(p.message)
 

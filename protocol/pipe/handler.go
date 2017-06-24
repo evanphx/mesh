@@ -176,7 +176,7 @@ func (d *DataHandler) Handle(ctx context.Context, hdr *pb.Header) error {
 		return err
 	}
 
-	log.Debugf("%s handle: %s", d.desc(), msg.Type)
+	log.Debugf("%s handle: %s (%s.%d.%d ack:%d)", d.desc(), msg.Type, hdr.Sender.Short(), msg.Session, msg.SeqId, msg.AckId)
 
 	switch msg.Type {
 	case PIPE_OPEN:
@@ -570,6 +570,10 @@ func (d *DataHandler) clearAcks(pipe *Pipe, id uint64) {
 		pipe.unackedMessages = nil
 	} else {
 		pipe.unackedMessages = pipe.unackedMessages[head:]
+	}
+
+	if pipe.closed && len(pipe.unackedMessages) == 0 {
+		delete(d.pipes, mkpipeKey(pipe.other, pipe.session))
 	}
 }
 
