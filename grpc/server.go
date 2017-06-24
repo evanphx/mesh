@@ -43,6 +43,7 @@ type MethodDesc struct {
 }
 
 type ServerStream interface {
+	Context() context.Context
 	RecvMsg(reply interface{}) error
 	SendMsg(reply interface{}) error
 }
@@ -139,6 +140,7 @@ func (s *Server) HandleTransport(ctx context.Context, tr Transport) {
 	}
 
 	ss := &serverStream{
+		ctx:   ctx,
 		frame: &frame,
 		tr:    tr,
 	}
@@ -249,6 +251,10 @@ type contextStream struct {
 	stream Stream
 }
 
+func (s *contextStream) Context() context.Context {
+	return s.ctx
+}
+
 func (s *contextStream) RecvMsg(reply interface{}) error {
 	return s.stream.RecvMsg(s.ctx, reply)
 }
@@ -268,5 +274,5 @@ func (s *Server) processStreamingRPC(ctx context.Context, stream Stream, srv *se
 		return appErr
 	}
 
-	return nil
+	return stream.Close(ctx)
 }

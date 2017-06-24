@@ -18,25 +18,31 @@ type Transport interface {
 }
 
 type ClientConn struct {
-	tr Transport
+	tr      Transport
+	creator func(context.Context) (Transport, error)
 }
 
 func NewClientConn(tr Transport) *ClientConn {
-	return &ClientConn{tr}
+	return &ClientConn{tr: tr}
+}
+
+func NewOnDemandClientConn(f func(context.Context) (Transport, error)) *ClientConn {
+	return &ClientConn{creator: f}
 }
 
 type ClientStream interface {
-	SendRequest(ctx context.Context) error
-	Close(ctx context.Context) error
-
 	SendMsg(m interface{}) error
 	RecvMsg(reply interface{}) error
 	CloseSend() error
 }
 
 func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, method string, opts ...CallOption) (ClientStream, error) {
-	cs := &clientStream{ctx, cc.tr, method}
-	err := cs.SendRequest(ctx)
+	cs, err := cc.makeStream(ctx, method)
+	if err != nil {
+		return nil, err
+	}
+
+	err = cs.SendRequest(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -44,8 +50,19 @@ func NewClientStream(ctx context.Context, desc *StreamDesc, cc *ClientConn, meth
 	return cs, nil
 }
 
-func (cc *ClientConn) makeStream(ctx context.Context, method string) (ClientStream, error) {
-	return &clientStream{ctx, cc.tr, method}, nil
+func (cc *ClientConn) makeStream(ctx context.Context, method string) (*clientStream, error) {
+	tr := cc.tr
+
+	var err error
+
+	if tr == nil {
+		tr, err = cc.creator(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return &clientStream{ctx: ctx, tr: tr, method: method}, nil
 }
 
 // Invoke sends the RPC request on the wire and returns after response is received.

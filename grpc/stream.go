@@ -139,9 +139,14 @@ func (b *ByteStream) SendRequest(ctx context.Context, v interface{}) error {
 }
 
 type serverStream struct {
+	ctx        context.Context
 	frame      *Frame
 	tr         Transport
 	sendClosed bool
+}
+
+func (s *serverStream) Context() context.Context {
+	return s.ctx
 }
 
 func (s *serverStream) RecvData(ctx context.Context, max int) ([]byte, error) {
@@ -265,13 +270,23 @@ func (s *serverStream) Method() string {
 }
 
 func (s *serverStream) Close(ctx context.Context) error {
+	var frame Frame
+
+	frame.Type = CLOSE_SEND
+
+	data, err := frame.Marshal()
+	if err == nil {
+		s.tr.Send(ctx, data)
+	}
+
 	return s.tr.Close(ctx)
 }
 
 type clientStream struct {
-	ctx    context.Context
-	tr     Transport
-	method string
+	recvClosed bool
+	ctx        context.Context
+	tr         Transport
+	method     string
 }
 
 func (s *clientStream) SendMsg(arg interface{}) error {
@@ -299,6 +314,10 @@ func (s *clientStream) SendMsg(arg interface{}) error {
 }
 
 func (s *clientStream) RecvMsg(reply interface{}) error {
+	if s.recvClosed {
+		return io.EOF
+	}
+
 	data, err := s.tr.Recv(s.ctx)
 	if err != nil {
 		return err
@@ -311,20 +330,23 @@ func (s *clientStream) RecvMsg(reply interface{}) error {
 		return err
 	}
 
-	if frame.Type == ERROR {
+	switch frame.Type {
+	case ERROR:
 		return fmt.Errorf("grpc remote error: %s", string(frame.Body))
-	}
+	case CLOSE_SEND:
+		s.recvClosed = true
+		s.tr.Close(s.ctx)
+		return io.EOF
+	case DATA:
+		u, ok := reply.(Unmarshaler)
+		if !ok {
+			return ErrInvalidValue
+		}
 
-	if frame.Type != DATA {
+		return u.Unmarshal(frame.Body)
+	default:
 		return fmt.Errorf("Invalid protocol state, expected DATA, got %s", frame.Type)
 	}
-
-	u, ok := reply.(Unmarshaler)
-	if !ok {
-		return ErrInvalidValue
-	}
-
-	return u.Unmarshal(frame.Body)
 }
 
 func (s *clientStream) SendRequest(ctx context.Context) error {
