@@ -164,6 +164,11 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			fmt.Printf("Neighbor: %s => %T\n", neigh.Id.Short(), neigh.tr)
 		}
 
+		fmt.Printf("Advertisements:")
+		for _, adver := range p.advers {
+			fmt.Printf("%#v\n", adver.adver)
+		}
+
 	case neighborAdd:
 		p.neighbors[op.id.String()] = &Neighbor{
 			Id: op.id,
