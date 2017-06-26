@@ -85,7 +85,7 @@ func (i *Instance) StaticTokenAuth(network, token string) {
 func (i *Instance) ProvideInfo() {
 	ch := make(chan os.Signal, 1)
 
-	signal.Notify(ch, syscall.SIGINFO, syscall.SIGUSR1)
+	signal.Notify(ch, syscall.SIGUSR1)
 
 	go func() {
 		for {
