@@ -20,6 +20,7 @@ message Advertisement {
 message AdvertisementUpdate {
   repeated Advertisement new_advers = 1;
   repeated string remove_advers = 2;
+  bytes origin = 3 [(gogoproto.casttype) = "github.com/evanphx/mesh.Identity"];
 }
 
 message AdvertisementChanges {

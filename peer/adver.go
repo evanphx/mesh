@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/evanphx/mesh"
+	"github.com/evanphx/mesh/log"
 	"github.com/evanphx/mesh/pb"
 	"github.com/satori/go.uuid"
 )
@@ -120,12 +121,20 @@ func (p *Peer) rebroadcastAdvers() error {
 	p.adverLock.Lock()
 
 	var update pb.AdvertisementUpdate
+	update.Origin = p.Identity()
 
 	for _, ad := range p.selfAdvers {
 		update.NewAdvers = append(update.NewAdvers, ad)
 	}
 
+	log.Debugf("rebroadcastAdvers: broadcast %d self advers", len(p.selfAdvers))
+
 	p.adverLock.Unlock()
+
+	if len(update.NewAdvers) == 0 {
+		return nil
+	}
+
 	p.neighLock.Lock()
 
 	for _, neigh := range p.neighbors {
@@ -135,6 +144,27 @@ func (p *Peer) rebroadcastAdvers() error {
 	p.neighLock.Unlock()
 
 	return nil
+}
+
+func (p *Peer) floodUpdate(up *pb.AdvertisementUpdate) {
+	p.neighLock.Lock()
+
+	var (
+		sent int
+		skip int
+	)
+
+	for _, neigh := range p.neighbors {
+		if up.Origin.Equal(neigh.Id) {
+			continue
+		}
+
+		go p.syncAds(p.lifetime, neigh.Id, up)
+	}
+
+	log.Debugf("Flooded advert update to %d neighbors (%d skip)", sent, skip)
+
+	p.neighLock.Unlock()
 }
 
 var _ pb.ServicesServer = (*Peer)(nil)

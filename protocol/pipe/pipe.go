@@ -261,8 +261,12 @@ func (d *DataHandler) LazyConnectPipe(ctx context.Context, dst mesh.Identity, na
 func (d *DataHandler) Connect(ctx context.Context, sel *mesh.PipeSelector) (*Pipe, error) {
 	peer, name, err := d.resolver.LookupSelector(sel)
 	if err != nil {
+		log.Printf("!! Unable to resolve %+v: %s", sel, err)
+
 		return nil, err
 	}
+
+	log.Printf("Resolved %+v to (%s,%s), connecting...", sel, peer, name)
 
 	return d.ConnectPipe(ctx, peer, name)
 }

@@ -358,6 +358,9 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			op.resp <- &pb.AdvertisementChanges{changes}
 		}
 
+		// Flood to neighbors
+		p.floodUpdate(op.update)
+
 	case inputAdvers:
 		p.adverLock.Lock()
 
@@ -367,6 +370,8 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 				adver:     ad,
 			}
 		}
+
+		log.Debugf("inputAdvers: %d new ads", len(op.advers))
 
 		p.adverLock.Unlock()
 	case rpcError:

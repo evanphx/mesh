@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+import "github.com/gogo/protobuf/gogoproto/gogo.proto";
+
+package main;
+
+message Time {
+  int64 now = 1;
+}
+
+message Req {}
+
+service Timer {
+  rpc StreamTimes(Req) returns (stream Time) {}
+}

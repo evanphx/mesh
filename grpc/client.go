@@ -75,6 +75,7 @@ func Invoke(ctx context.Context, method string, args, reply interface{}, cc *Cli
 func invoke(ctx context.Context, method string, args, reply interface{}, cc *ClientConn, opts ...CallOption) (e error) {
 	stream, err := cc.makeStream(ctx, method)
 	if err != nil {
+		log.Debugf("Unable to create stream for invoke: %s", err)
 		return err
 	}
 

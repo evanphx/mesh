@@ -126,7 +126,7 @@ type Messenger interface {
 func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger) {
 	session, err := acceptHS(ctx, p, v, tr)
 	if err != nil {
-		log.Debugf("Error in accept handshake: %s", err)
+		log.Printf("Error in accept handshake: %s", err)
 		return
 	}
 
@@ -197,6 +197,8 @@ func ConnectTCP(ctx context.Context, l Peer, v Validator, host, netName string) 
 
 		time.Sleep(1 * time.Second)
 	}
+
+	log.Printf("Connected to %s", host)
 
 	mon := &closeMonitor{
 		ReadWriteCloser: conn,
