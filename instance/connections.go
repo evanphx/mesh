@@ -47,10 +47,6 @@ func TCPDialer(p *peer.Peer, u *url.URL) error {
 	return err
 }
 
-func UTPDialer(p *peer.Peer, u *url.URL) error {
-	return transport.ConnectUTP(context.TODO(), p, p, u.Host, u.Path)
-}
-
 var DefaultConnections *Connections
 
 func init() {
@@ -60,7 +56,6 @@ func init() {
 	}
 
 	conn.Register("mesh", TCPDialer)
-	conn.Register("mesh+utp", UTPDialer)
 
 	DefaultConnections = conn
 }
