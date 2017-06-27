@@ -147,6 +147,11 @@ func (p *Peer) rebroadcastAdvers() error {
 }
 
 func (p *Peer) floodUpdate(up *pb.AdvertisementUpdate) {
+	if len(up.Origin) == 0 || up.Origin.Equal(mesh.NilIdentity) {
+		log.Debugf("cowardly refusing to flood update with unknown origin")
+		return
+	}
+
 	p.neighLock.Lock()
 
 	var (

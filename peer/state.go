@@ -299,6 +299,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		op.update <- &update
 	case introduceAdver:
 		update := &pb.AdvertisementUpdate{}
+		update.Origin = p.Identity()
 		update.NewAdvers = append(update.NewAdvers, op.adver)
 
 		p.adverLock.Lock()
@@ -318,6 +319,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		p.neighLock.Unlock()
 	case removeAdver:
 		update := &pb.AdvertisementUpdate{}
+		update.Origin = p.Identity()
 		update.RemoveAdvers = append(update.RemoveAdvers, op.adver.Id)
 
 		p.adverLock.Lock()
