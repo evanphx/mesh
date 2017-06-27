@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/evanphx/mesh"
 	"github.com/evanphx/mesh/log"
 )
 
@@ -119,7 +120,7 @@ func (s *Server) RegisterService(sd *ServiceDesc, ss interface{}) {
 	s.services[sd.ServiceName] = srv
 }
 
-func (s *Server) HandleTransport(ctx context.Context, tr Transport) {
+func (s *Server) HandleTransport(ctx context.Context, tr Transport, sender mesh.Identity) {
 	msg, err := tr.Recv(ctx)
 	if err != nil {
 		log.Printf("Error receiving transport data: %s", err)
@@ -139,6 +140,8 @@ func (s *Server) HandleTransport(ctx context.Context, tr Transport) {
 		tr.Close(ctx)
 	}
 
+	ctx = context.WithValue(ctx, senderIdentityKey, sender)
+
 	ss := &serverStream{
 		ctx:   ctx,
 		frame: &frame,
@@ -148,7 +151,7 @@ func (s *Server) HandleTransport(ctx context.Context, tr Transport) {
 	s.handleStream(ctx, ss)
 }
 
-func (s *Server) handleStream(ctx context.Context, stream Stream) {
+func (s *Server) handleStream(ctx context.Context, stream *serverStream) {
 	sm := stream.Method()
 	log.Debugf("handling request for: %s", sm)
 
@@ -199,7 +202,20 @@ type Unmarshaler interface {
 	Unmarshal(req []byte) error
 }
 
-func (s *Server) processUnaryRPC(ctx context.Context, stream Stream, srv *service, md *MethodDesc) (err error) {
+type senderIdentity struct{}
+
+var senderIdentityKey senderIdentity
+
+func SenderIdentity(ctx context.Context) (mesh.Identity, bool) {
+	id := ctx.Value(senderIdentityKey)
+	if id == nil {
+		return nil, false
+	}
+
+	return id.(mesh.Identity), true
+}
+
+func (s *Server) processUnaryRPC(ctx context.Context, stream *serverStream, srv *service, md *MethodDesc) (err error) {
 	req, err := stream.RecvData(ctx, math.MaxInt32)
 
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/evanphx/mesh"
+	"github.com/evanphx/mesh/grpc"
 	"github.com/evanphx/mesh/log"
 	"github.com/evanphx/mesh/pb"
 	"github.com/satori/go.uuid"
@@ -146,7 +147,7 @@ func (p *Peer) rebroadcastAdvers() error {
 	return nil
 }
 
-func (p *Peer) floodUpdate(up *pb.AdvertisementUpdate) {
+func (p *Peer) floodUpdate(up *pb.AdvertisementUpdate, from mesh.Identity) {
 	if len(up.Origin) == 0 || up.Origin.Equal(mesh.NilIdentity) {
 		log.Debugf("cowardly refusing to flood update with unknown origin")
 		return
@@ -164,6 +165,10 @@ func (p *Peer) floodUpdate(up *pb.AdvertisementUpdate) {
 			continue
 		}
 
+		if from.Equal(neigh.Id) {
+			continue
+		}
+
 		go p.syncAds(p.lifetime, neigh.Id, up)
 	}
 
@@ -177,7 +182,13 @@ var _ pb.ServicesServer = (*Peer)(nil)
 func (p *Peer) SyncAdvertisements(ctx context.Context, update *pb.AdvertisementUpdate) (*pb.AdvertisementChanges, error) {
 	resp := make(chan *pb.AdvertisementChanges)
 
-	p.opChan <- syncAdsOp{update: update, resp: resp}
+	sender := mesh.NilIdentity
+
+	if id, ok := grpc.SenderIdentity(ctx); ok {
+		sender = id
+	}
+
+	p.opChan <- syncAdsOp{update: update, resp: resp, from: sender}
 
 	return <-resp, nil
 }

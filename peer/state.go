@@ -64,6 +64,7 @@ func (n rpcError) OpType() string {
 type syncAdsOp struct {
 	update *pb.AdvertisementUpdate
 	resp   chan *pb.AdvertisementChanges
+	from   mesh.Identity
 }
 
 func (o syncAdsOp) OpType() string {
@@ -164,9 +165,13 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			fmt.Printf("Neighbor: %s => %T\n", neigh.Id.Short(), neigh.tr)
 		}
 
-		fmt.Printf("Advertisements:")
+		fmt.Printf("Advertisements:\n")
 		for _, adver := range p.advers {
-			fmt.Printf("%#v\n", adver.adver)
+			fmt.Printf("ID: %s\n", adver.adver.Id)
+			fmt.Printf("  Pipe: %s\n", adver.adver.Pipe)
+			fmt.Printf("  Owner: %s\n", adver.adver.Owner.Short())
+			fmt.Printf("  Tags: %#v\n", adver.adver.Tags)
+			fmt.Printf("  TTL: %d (%s, %s)\n", adver.adver.TimeToLive, adver.expiresAt.Sub(time.Now()), adver.expiresAt)
 		}
 
 	case neighborAdd:
@@ -361,7 +366,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		}
 
 		// Flood to neighbors
-		p.floodUpdate(op.update)
+		p.floodUpdate(op.update, op.from)
 
 	case inputAdvers:
 		p.adverLock.Lock()

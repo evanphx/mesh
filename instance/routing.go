@@ -60,6 +60,6 @@ func (i *Instance) listenForRPC(ctx context.Context) error {
 
 		log.Debugf("%s accept rpc pipe", i.Peer.Desc())
 
-		go i.rpcServer.HandleTransport(context.Background(), pipe)
+		go i.rpcServer.HandleTransport(context.Background(), pipe, pipe.PeerIdentity())
 	}
 }

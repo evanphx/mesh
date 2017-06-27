@@ -69,6 +69,12 @@ func (p *Pipe) init() {
 	go p.resendLoop()
 }
 
+func (p *Pipe) PeerIdentity() mesh.Identity {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.other
+}
+
 type ListenPipe struct {
 	name    string
 	handler *DataHandler
@@ -261,12 +267,8 @@ func (d *DataHandler) LazyConnectPipe(ctx context.Context, dst mesh.Identity, na
 func (d *DataHandler) Connect(ctx context.Context, sel *mesh.PipeSelector) (*Pipe, error) {
 	peer, name, err := d.resolver.LookupSelector(sel)
 	if err != nil {
-		log.Printf("!! Unable to resolve %+v: %s", sel, err)
-
 		return nil, err
 	}
-
-	log.Printf("Resolved %+v to (%s,%s), connecting...", sel, peer, name)
 
 	return d.ConnectPipe(ctx, peer, name)
 }
@@ -461,6 +463,7 @@ func (p *Pipe) Close(ctx context.Context) error {
 		p.handler.pipeLock.Lock()
 		delete(p.handler.pipes, mkpipeKey(p.other, p.session))
 		p.handler.pipeLock.Unlock()
+		p.lifetimeCancel()
 	}
 
 	close(p.message)

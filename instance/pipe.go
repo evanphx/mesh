@@ -27,7 +27,7 @@ func (i *Instance) Connect(ctx context.Context, sel *mesh.PipeSelector) (*pipe.P
 }
 
 type RPCHandler interface {
-	HandleTransport(ctx context.Context, tr grpc.Transport)
+	HandleTransport(ctx context.Context, tr grpc.Transport, sender mesh.Identity)
 }
 
 func (i *Instance) HandleRPC(ctx context.Context, adver *pb.Advertisement, h RPCHandler) error {
@@ -44,7 +44,7 @@ func (i *Instance) HandleRPC(ctx context.Context, adver *pb.Advertisement, h RPC
 
 		log.Debugf("%s accept rpc pipe", i.Peer.Desc())
 
-		go h.HandleTransport(ctx, pipe)
+		go h.HandleTransport(ctx, pipe, pipe.PeerIdentity())
 	}
 
 	return nil
