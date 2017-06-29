@@ -162,9 +162,21 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 		}
 
 	case printStatus:
-		for _, neigh := range p.neighbors {
-			fmt.Printf("Neighbor: %s => %T\n", neigh.Id.Short(), neigh.tr)
+		fmt.Printf("==== Status of %s", p.Identity())
+
+		p.neighLock.Lock()
+
+		if len(p.neighbors) == 0 {
+			fmt.Printf("No neighbors")
+		} else {
+			for _, neigh := range p.neighbors {
+				fmt.Printf("Neighbor: %s => %T\n", neigh.Id.Short(), neigh.tr)
+			}
 		}
+
+		p.neighLock.Unlock()
+
+		p.adverLock.Lock()
 
 		fmt.Printf("Advertisements:\n")
 		for _, adver := range p.advers {
@@ -175,7 +187,11 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			fmt.Printf("  TTL: %d (%s, %s)\n", adver.adver.TimeToLive, adver.expiresAt.Sub(time.Now()), adver.expiresAt)
 		}
 
+		p.adverLock.Unlock()
+
 	case neighborAdd:
+		p.neighLock.Lock()
+
 		p.neighbors[op.id.String()] = &Neighbor{
 			Id: op.id,
 			tr: op.tr,
@@ -210,7 +226,11 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			go p.sendNewRoute(p.lifetime, neigh.Id, &req)
 		}
 
+		p.neighLock.Unlock()
+
 	case neighborLeft:
+		p.neighLock.Lock()
+
 		delete(p.neighbors, op.neigh.String())
 
 		p.router.PruneByHop(op.neigh.String())
@@ -231,6 +251,7 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			go p.sendNewRoute(p.lifetime, neigh.Id, &req)
 		}
 
+		p.neighLock.Unlock()
 	case routeUpdate:
 		for _, route := range op.update.Routes {
 			// Skip routes advertise for us, we know where we are
@@ -277,6 +298,8 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 
 			op.update.Neighbor = p.Identity()
 
+			p.neighLock.Lock()
+
 			for _, neigh := range p.neighbors {
 				if neigh.Id.Equal(from) {
 					continue
@@ -284,6 +307,8 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 
 				go p.sendNewRoute(p.lifetime, neigh.Id, op.update)
 			}
+
+			p.neighLock.Unlock()
 		}
 	case routeRetrieve:
 		var update pb.RouteUpdate
