@@ -678,5 +678,82 @@ func TestPeerAdver(t *testing.T) {
 
 		assert.False(t, adver2.Verify(auth))
 	})
+
+	n.It("removes very stale advers", func(t *testing.T) {
+		ld := util.NewLocalAdvertisements()
+		lr := util.NewLocalRoutes()
+
+		ib, rb := util.PairByteTraders()
+
+		i, err := InitNewPeer()
+		require.NoError(t, err)
+
+		defer i.Shutdown()
+
+		r, err := InitNewPeer()
+		require.NoError(t, err)
+
+		defer r.Shutdown()
+
+		i.adverOps = ld.AddNode(i.Identity(), i)
+		r.adverOps = ld.AddNode(r.Identity(), r)
+
+		i.routeOps = lr.AddNode(i.Identity(), i)
+		r.routeOps = lr.AddNode(r.Identity(), r)
+
+		var pi pipe.DataHandler
+		var pr pipe.DataHandler
+
+		pi.Setup(2, i, i.identityKey)
+		pr.Setup(2, r, r.identityKey)
+
+		i.AddProtocol(2, &pi)
+		r.AddProtocol(2, &pr)
+
+		r.AttachPeer(i.Identity(), rb)
+		i.AttachPeer(r.Identity(), ib)
+
+		r.WaitTilIdle()
+		i.WaitTilIdle()
+
+		time.Sleep(100 * time.Millisecond)
+
+		l, err := pr.Listen(&pb.Advertisement{
+			Pipe: "test",
+			Tags: map[string]string{
+				"env": "production",
+			},
+		})
+
+		require.NoError(t, err)
+
+		r.WaitTilIdle()
+		i.WaitTilIdle()
+
+		time.Sleep(100 * time.Millisecond)
+
+		l.Close()
+
+		r.WaitTilIdle()
+		i.WaitTilIdle()
+
+		time.Sleep(100 * time.Millisecond)
+
+		i.adverLock.Lock()
+		for _, ad := range i.advers {
+			ad.expiresAt = time.Now().Add(-6 * time.Minute)
+		}
+		i.adverLock.Unlock()
+
+		i.pruneStaleAdvers()
+
+		i.adverLock.Lock()
+		cnt := len(i.advers)
+		i.adverLock.Unlock()
+
+		assert.Equal(t, 0, cnt)
+
+	})
+
 	n.Meow()
 }

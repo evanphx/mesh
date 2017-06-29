@@ -147,6 +147,32 @@ func (p *Peer) rebroadcastAdvers() error {
 	return nil
 }
 
+func (p *Peer) pruneStaleAdvers() {
+	p.adverLock.Lock()
+	defer p.adverLock.Unlock()
+
+	now := time.Now()
+
+	var toRemove []string
+
+	for k, ad := range p.advers {
+		ago := now.Sub(ad.expiresAt)
+		if ago > 5*time.Minute {
+			toRemove = append(toRemove, k)
+		}
+	}
+
+	if len(toRemove) == 0 {
+		return
+	}
+
+	log.Debugf("pruneStaleAdvers: removing %d advers over 5 minutes old", len(toRemove))
+
+	for _, k := range toRemove {
+		delete(p.advers, k)
+	}
+}
+
 func (p *Peer) floodUpdate(up *pb.AdvertisementUpdate, from mesh.Identity) {
 	if len(up.Origin) == 0 || up.Origin.Equal(mesh.NilIdentity) {
 		log.Debugf("cowardly refusing to flood update with unknown origin")

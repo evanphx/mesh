@@ -123,6 +123,7 @@ func (p *Peer) handleOperations(ctx context.Context) {
 			p.processOperation(ctx, op)
 		case <-ticker.C:
 			p.rebroadcastAdvers()
+			p.pruneStaleAdvers()
 		case <-ctx.Done():
 			return
 		}
