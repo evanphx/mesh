@@ -156,6 +156,10 @@ func (p *Peer) pruneStaleAdvers() {
 	var toRemove []string
 
 	for k, ad := range p.advers {
+		if _, ok := p.selfAdvers[k]; ok {
+			continue
+		}
+
 		ago := now.Sub(ad.expiresAt)
 		if ago > 5*time.Minute {
 			toRemove = append(toRemove, k)
