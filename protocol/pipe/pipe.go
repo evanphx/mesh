@@ -438,7 +438,7 @@ func (p *Pipe) Recv(ctx context.Context) ([]byte, error) {
 
 			data, err := p.csr.Decrypt(nil, nil, m.msg.Data)
 			if err != nil {
-				log.Printf("%s error decrypting pipe data: %s", err)
+				log.Printf("error decrypting pipe data: %s", err)
 				return nil, err
 			}
 

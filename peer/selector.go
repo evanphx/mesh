@@ -15,6 +15,8 @@ func (p *Peer) lookupAdver(sel *mesh.PipeSelector) (*localAdver, error) {
 
 	now := time.Now()
 
+	err := ErrNoMatch
+
 	for _, ld := range p.advers {
 		if !ld.valid(now) {
 			continue
@@ -23,11 +25,13 @@ func (p *Peer) lookupAdver(sel *mesh.PipeSelector) (*localAdver, error) {
 		if ld.adver.MatchSelector(sel) {
 			if p.reachable(ld.adver.Owner) {
 				return ld, nil
+			} else {
+				err = ErrUnroutable
 			}
 		}
 	}
 
-	return nil, ErrNoMatch
+	return nil, err
 }
 
 func (p *Peer) LookupSelector(sel *mesh.PipeSelector) (mesh.Identity, string, error) {

@@ -250,13 +250,13 @@ func (p *Peer) StaticKey() crypto.DHKey {
 	return p.identityKey
 }
 
-func (p *Peer) Authorize(a *auth.Authorizer) error {
+func (p *Peer) Authorize(a *auth.Authorizer) ([]byte, error) {
 	_, sig := a.Sign(p.identityKey.Public)
 	p.networks[a.Name()] = &Network{
 		authPub: a.PublicKey(),
 		cred:    sig,
 	}
-	return nil
+	return sig, nil
 }
 
 func (n *Network) validateCred(key, rcred []byte) bool {

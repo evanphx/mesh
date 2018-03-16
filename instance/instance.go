@@ -15,6 +15,10 @@ import (
 	"github.com/evanphx/mesh/transport"
 )
 
+type Options struct {
+	AdvertiseMDNS bool
+}
+
 type Instance struct {
 	Peer *peer.Peer
 
@@ -31,16 +35,26 @@ type Instance struct {
 	connections *Connections
 
 	validator transport.Validator
+
+	hasListeners bool
+
+	options Options
 }
 
 func InitNew() (*Instance, error) {
+	return Init(Options{})
+}
+
+func Init(opts Options) (*Instance, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	i := &Instance{
 		lifetime:       ctx,
 		lifetimeCancel: cancel,
-		validator:      NoCreds{},
+		options:        opts,
 	}
+
+	i.validator = &AutoCreds{i}
 
 	p, err := peer.InitNew(peer.PeerConfig{
 		AdvertisementOps: i,
@@ -57,6 +71,8 @@ func InitNew() (*Instance, error) {
 
 	i.rpcServer = grpc.NewServer()
 	go i.listenForRPC(i.lifetime)
+
+	i.ProvideInfo()
 
 	return i, nil
 }

@@ -21,16 +21,16 @@ func main() {
 		log.Fatal(err)
 	}
 
-	inst.ProvideInfo()
+	// inst.ProvideInfo()
 
-	inst.StaticTokenAuth(*fNet, *fToken)
+	// inst.StaticTokenAuth(*fNet, *fToken)
 
-	addr, err := inst.ListenTCP(*fAddr)
+	_, err = inst.ListenTCP(*fAddr, []string{*fNet})
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Printf("Listening on %s", addr)
+	log.Printf("Listening\n")
 
 	select {}
 }

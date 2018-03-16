@@ -198,8 +198,6 @@ func ConnectTCP(ctx context.Context, l Peer, v Validator, host, netName string) 
 		time.Sleep(1 * time.Second)
 	}
 
-	log.Printf("Connected to %s", host)
-
 	mon := &closeMonitor{
 		ReadWriteCloser: conn,
 	}
