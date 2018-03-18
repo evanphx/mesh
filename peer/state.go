@@ -13,7 +13,8 @@ import (
 )
 
 type inputOperation struct {
-	hdr *pb.Header
+	hdr  *pb.Header
+	sess mesh.Session
 }
 
 func (p inputOperation) OpType() string {
@@ -154,6 +155,8 @@ func (p *Peer) processOperation(ctx context.Context, val operation) {
 			// TODO send back some kind of "huh?"
 			return
 		}
+
+		ctx = context.WithValue(ctx, currentSession{}, op.sess)
 
 		err := ph.Handle(ctx, hdr)
 		if err != nil {

@@ -109,7 +109,7 @@ func listen(pctx context.Context, p Peer, v Validator, l net.Listener) (net.Addr
 					ReadWriteCloser: c,
 				}
 
-				go Handshake(pctx, p, v, NewFramer(mon))
+				go Handshake(pctx, p, v, NewFramer(mon), c.RemoteAddr().String())
 			}
 		}
 	}()
@@ -123,8 +123,8 @@ type Messenger interface {
 	Close(context.Context) error
 }
 
-func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger) {
-	session, err := acceptHS(ctx, p, v, tr)
+func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger, remoteId string) {
+	session, err := acceptHS(ctx, p, v, tr, remoteId)
 	if err != nil {
 		log.Printf("Error in accept handshake: %s", err)
 		return
@@ -133,7 +133,7 @@ func Handshake(ctx context.Context, p Peer, v Validator, tr Messenger) {
 	p.AddSession(session)
 }
 
-func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Session, error) {
+func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger, remoteId string) (mesh.Session, error) {
 	hs := crypto.NewXXResponder(p.StaticKey())
 
 	buf, err := tr.Recv(ctx, make([]byte, 256))
@@ -174,6 +174,7 @@ func acceptHS(ctx context.Context, p Peer, v Validator, tr Messenger) (mesh.Sess
 		tr:           tr,
 		readCS:       csR,
 		writeCS:      csW,
+		remoteId:     remoteId,
 	}
 
 	return sess, nil

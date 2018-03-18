@@ -59,6 +59,8 @@ type Pipe struct {
 	resendInterval  time.Duration
 	ackBacklog      int
 	unackedMessages []unackedMessage
+
+	remoteId string
 }
 
 func (p *Pipe) init() {
@@ -73,6 +75,12 @@ func (p *Pipe) PeerIdentity() mesh.Identity {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	return p.other
+}
+
+func (p *Pipe) RemoteID() string {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.remoteId
 }
 
 type ListenPipe struct {

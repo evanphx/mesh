@@ -14,10 +14,15 @@ type noiseSession struct {
 
 	peerIdentity mesh.Identity
 
-	tr Messenger
+	tr       Messenger
+	remoteId string
 
 	readCS  crypto.CipherState
 	writeCS crypto.CipherState
+}
+
+func (n *noiseSession) RemoteID() string {
+	return n.remoteId
 }
 
 func (n *noiseSession) PeerIdentity() mesh.Identity {

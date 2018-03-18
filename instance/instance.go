@@ -17,6 +17,7 @@ import (
 
 type Options struct {
 	AdvertiseMDNS bool
+	NoNetworkAuth bool
 }
 
 type Instance struct {
@@ -54,7 +55,11 @@ func Init(opts Options) (*Instance, error) {
 		options:        opts,
 	}
 
-	i.validator = &AutoCreds{i}
+	if opts.NoNetworkAuth {
+		i.validator = &NoCreds{}
+	} else {
+		i.validator = &AutoCreds{i}
+	}
 
 	p, err := peer.InitNew(peer.PeerConfig{
 		AdvertisementOps: i,

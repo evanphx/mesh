@@ -62,8 +62,10 @@ func (p *Peer) handleMessage(ctx context.Context, buf []byte) error {
 		return p.forward(ctx, &hdr, buf)
 	}
 
+	ms := GetSession(ctx)
+
 	select {
-	case p.opChan <- inputOperation{&hdr}:
+	case p.opChan <- inputOperation{&hdr, ms}:
 		// ok
 	case <-ctx.Done():
 		return ctx.Err()

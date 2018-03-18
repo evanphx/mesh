@@ -4,6 +4,7 @@ import "context"
 
 type Session interface {
 	PeerIdentity() Identity
+	RemoteID() string
 
 	Send(ctx context.Context, msg []byte) error
 	Recv(ctx context.Context, out []byte) ([]byte, error)

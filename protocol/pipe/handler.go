@@ -15,6 +15,7 @@ import (
 	"github.com/evanphx/mesh/crypto"
 	"github.com/evanphx/mesh/log"
 	"github.com/evanphx/mesh/pb"
+	"github.com/evanphx/mesh/peer"
 )
 
 const MaxWindowSize = 256
@@ -288,6 +289,12 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 
 	log.Debugf("%s requesting new pipe from %s", d.desc(), hdr.Sender.Short())
 
+	remoteId := hdr.Sender.Short()
+
+	if ms := peer.GetSession(ctx); ms != nil {
+		remoteId = ms.RemoteID()
+	}
+
 	if lp, ok := d.listening[msg.PipeName]; ok {
 		pipe := &Pipe{
 			other:      hdr.Sender,
@@ -296,6 +303,7 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 			message:    make(chan pipeMessage, d.PipeBacklog),
 			nextSeqId:  1,
 			ackBacklog: d.AckBacklog,
+			remoteId:   remoteId,
 		}
 
 		pipe.init()

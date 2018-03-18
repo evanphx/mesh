@@ -225,8 +225,19 @@ func (p *Peer) AddNeighbor(id mesh.Identity, tr ByteTransport) {
 	p.opChan <- neighborAdd{id, tr}
 }
 
+type currentSession struct{}
+
+func GetSession(ctx context.Context) mesh.Session {
+	v := ctx.Value(currentSession{})
+	if v != nil {
+		return v.(mesh.Session)
+	}
+
+	return nil
+}
+
 func (p *Peer) AddSession(sess mesh.Session) {
-	go p.Monitor(p.lifetime, sess.PeerIdentity(), sess)
+	go p.Monitor(context.WithValue(p.lifetime, currentSession{}, sess), sess.PeerIdentity(), sess)
 
 	p.opChan <- neighborAdd{sess.PeerIdentity(), sess}
 }
