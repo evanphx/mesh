@@ -182,6 +182,8 @@ func (d *DataHandler) Handle(ctx context.Context, hdr *pb.Header) error {
 	switch msg.Type {
 	case PIPE_OPEN:
 		d.newPipeRequest(ctx, hdr, msg)
+	case PIPE_OPEN_SUB:
+		d.newSubPipeRequest(ctx, hdr, msg)
 	case PIPE_OPENED:
 		d.setPipeOpened(ctx, hdr, msg)
 	case PIPE_DATA:
@@ -394,6 +396,142 @@ func (d *DataHandler) newPipeRequest(ctx context.Context, hdr *pb.Header, msg *M
 		if err != nil {
 			log.Debugf("Error sending PIPE_UNKNOWN: %s", err)
 		}
+	}
+}
+
+func (d *DataHandler) newSubPipeRequest(ctx context.Context, hdr *pb.Header, msg *Message) {
+	d.pipeLock.Lock()
+	defer d.pipeLock.Unlock()
+
+	log.Debugf("%s requesting new pipe from %s", d.desc(), hdr.Sender.Short())
+
+	remoteId := hdr.Sender.Short()
+
+	if ms := peer.GetSession(ctx); ms != nil {
+		remoteId = ms.RemoteID()
+	}
+
+	parent, ok := d.pipes[mkpipeKey(hdr.Sender, msg.ParentSession)]
+	if !ok || !parent.other.Equal(hdr.Sender) {
+		log.Debugf("%s unknown parent session for subpipe requested: %d", d.desc(), msg.ParentSession)
+
+		var errM Message
+		errM.Type = PIPE_UNKNOWN
+		errM.Session = msg.Session
+
+		err := d.sender.SendData(ctx, hdr.Sender, d.peerProto, &errM)
+		if err != nil {
+			log.Debugf("Error sending PIPE_UNKNOWN: %s", err)
+		}
+		return
+	}
+
+	parent.lock.Lock()
+	acceptingSubs := parent.newSubPipes != nil
+	parent.lock.Unlock()
+
+	if !acceptingSubs {
+		log.Debugf("%s parent not listening for subpipes: %d", d.desc(), msg.ParentSession)
+
+		var errM Message
+		errM.Type = PIPE_UNKNOWN
+		errM.Session = msg.Session
+
+		err := d.sender.SendData(ctx, hdr.Sender, d.peerProto, &errM)
+		if err != nil {
+			log.Debugf("Error sending PIPE_UNKNOWN: %s", err)
+		}
+		return
+	}
+
+	pipe := &Pipe{
+		other:      hdr.Sender,
+		handler:    d,
+		session:    msg.Session,
+		message:    make(chan pipeMessage, d.PipeBacklog),
+		nextSeqId:  1,
+		ackBacklog: d.AckBacklog,
+		remoteId:   remoteId,
+	}
+
+	pipe.init()
+
+	_, ok = d.pipes[mkpipeKey(pipe.other, msg.Session)]
+	if ok {
+		log.Printf("already have that session %d (parent: %d)", msg.Session, msg.ParentSession)
+		// Umm, ok?
+		return
+	}
+
+	d.pipes[mkpipeKey(pipe.other, msg.Session)] = pipe
+
+	var (
+		zrrtData   []byte
+		retPayload []byte
+	)
+
+	if msg.Encrypted {
+		ks := crypto.NewKKResponder(d.identityKey, hdr.Sender)
+
+		out, err := ks.Start(nil, msg.Data)
+		if err != nil {
+			log.Printf("%s error decrypting responder handshake: %s", d.desc(), err)
+
+			var out Message
+			out.Type = PIPE_UNKNOWN
+			out.Session = msg.Session
+
+			err := d.sender.SendData(ctx, hdr.Sender, d.peerProto, &out)
+			if err != nil {
+				log.Debugf("Error sending PIPE_UNKNOWN: %s", err)
+			}
+
+			return
+		}
+
+		// Marshal and encrypt the return message to complete
+		// the handshake
+
+		enc, csw, csr := ks.Finish(nil, nil)
+		retPayload = enc
+
+		pipe.csr = csr
+		pipe.csw = csw
+
+		zrrtData = out
+		log.Debugf("%s zrtt payload in OPEN_SUB: %d", d.desc(), len(zrrtData))
+	}
+
+	// TODO implement a backlog via a buffered channel and a
+	// nonblocking send here
+	parent.newSubPipes <- pipe
+
+	var ret Message
+	ret.Type = PIPE_OPENED
+	ret.Session = msg.Session
+	ret.AckId = msg.SeqId
+
+	if msg.Encrypted {
+		log.Debugf("%s responding with encrypted PIPE_OPENED to %s (%d) (zrtt: %d)",
+			d.desc(), hdr.Sender.Short(), msg.Session, len(zrrtData))
+		ret.Encrypted = true
+		ret.Data = retPayload
+	} else {
+		log.Debugf("%s responding with unencrypted PIPE_OPENED %s (%d)",
+			d.desc(), hdr.Sender.Short(), msg.Session)
+	}
+
+	err := d.sender.SendData(ctx, hdr.Sender, d.peerProto, &ret)
+	if err != nil {
+		log.Debugf("Error sending PIPE_OPENED: %s", err)
+	}
+
+	// This is to support 0-RTT connects
+	if len(zrrtData) > 0 {
+		pipe.inputThreshold = msg.SeqId
+		log.Debugf("%s detected 0-rtt pipe open: %d bytes (%d)", d.desc(), len(msg.Data), msg.SeqId)
+		d.deliverToPipe(ctx, pipe, pipeMessage{hdr, msg, zrrtData})
+		d.drainPossibleUnknowns(ctx, pipe, msg.Session)
 	}
 }
 

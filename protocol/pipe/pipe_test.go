@@ -1,6 +1,7 @@
 package pipe
 
 import (
+	bytes "bytes"
 	"context"
 	"sync"
 	"testing"
@@ -864,6 +865,241 @@ func TestPipeAck(t *testing.T) {
 		time.Sleep(ResendInterval * 2)
 
 		assert.Equal(t, before+1, s2.Size())
+	})
+
+	n.It("can open a subpipe", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err := lp.Accept(ctx)
+			if err != nil {
+				return
+			}
+			log.Debugf("accepted p1")
+
+			time.Sleep(1 * time.Second)
+
+			log.Debugf("open sub")
+			sub, err := p1.OpenSub()
+			if err != nil {
+				return
+			}
+
+			sub.Send(ctx, []byte("hello"))
+		}()
+
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		log.Debugf("accept sub")
+		sub, err := p2.AcceptSub(ctx)
+		require.NoError(t, err)
+
+		log.Debugf("receiving")
+		recv, err := sub.Recv(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, "hello", string(recv))
+
+		wg.Wait()
+	})
+
+	n.It("can open a subpipe after the parent sends data", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err := lp.Accept(ctx)
+			if err != nil {
+				t.Logf("failed to send: %s", err)
+				return
+			}
+
+			err = p1.Send(ctx, []byte("hello"))
+			if err != nil {
+				t.Logf("failed to send: %s", err)
+				return
+			}
+
+			log.Debugf("accepted p1")
+
+			time.Sleep(1 * time.Second)
+
+			log.Debugf("open sub")
+			sub, err := p1.OpenSub()
+			if err != nil {
+				t.Logf("failed to send: %s", err)
+				return
+			}
+
+			sub.Send(ctx, []byte("hello"))
+		}()
+
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		m1, err := p2.Recv(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, "hello", string(m1))
+
+		log.Debugf("accept sub")
+		sub, err := p2.AcceptSub(ctx)
+		require.NoError(t, err)
+
+		log.Debugf("receiving")
+		recv, err := sub.Recv(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, "hello", string(recv))
+
+		wg.Wait()
+	})
+
+	n.It("can open a subpipe after the parent recvs data", func(t *testing.T) {
+		var (
+			h1 DataHandler
+			s1 util.SendAdapter
+			h2 DataHandler
+			s2 util.SendAdapter
+
+			k1 = crypto.GenerateKey()
+			k2 = crypto.GenerateKey()
+		)
+
+		h1.Setup(2, &s1, k1)
+		h2.Setup(2, &s2, k2)
+
+		defer h1.Cleanup()
+		defer h2.Cleanup()
+
+		s1.Sender = k1.Identity()
+		s2.Sender = k2.Identity()
+
+		s1.Handler = &h2
+		s2.Handler = &h1
+
+		lp, err := h1.ListenPipe("test")
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		var wg sync.WaitGroup
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			p1, err := lp.Accept(ctx)
+			if err != nil {
+				t.Logf("failed to send: %s", err)
+				return
+			}
+
+			m1, err := p1.Recv(ctx)
+			if err != nil {
+				t.Logf("failed to send: %s", err)
+				return
+			}
+
+			if !bytes.Equal(m1, []byte("hello")) {
+				t.Log("message not hello")
+				return
+			}
+
+			log.Debugf("accepted p1")
+
+			time.Sleep(1 * time.Second)
+
+			log.Debugf("open sub")
+			sub, err := p1.OpenSub()
+			if err != nil {
+				t.Logf("failed to send: %s", err)
+				return
+			}
+
+			sub.Send(ctx, []byte("hello"))
+		}()
+
+		p2, err := h2.ConnectPipe(ctx, k1.Identity(), "test")
+		require.NoError(t, err)
+
+		err = p2.Send(ctx, []byte("hello"))
+		require.NoError(t, err)
+
+		log.Debugf("accept sub")
+		sub, err := p2.AcceptSub(ctx)
+		require.NoError(t, err)
+
+		log.Debugf("receiving")
+		recv, err := sub.Recv(ctx)
+		require.NoError(t, err)
+
+		assert.Equal(t, "hello", string(recv))
+
+		wg.Wait()
 	})
 
 	n.Meow()

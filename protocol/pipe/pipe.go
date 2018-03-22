@@ -61,6 +61,9 @@ type Pipe struct {
 	unackedMessages []unackedMessage
 
 	remoteId string
+
+	parent      *Pipe
+	newSubPipes chan *Pipe
 }
 
 func (p *Pipe) init() {
@@ -341,6 +344,10 @@ func (p *Pipe) resendUnacked(ctx context.Context) error {
 }
 
 func (p *Pipe) Send(ctx context.Context, data []byte) error {
+	if len(data) == 0 {
+		return nil
+	}
+
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
@@ -352,6 +359,8 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 		log.Debugf("blocking for ack space")
 		p.cond.Wait()
 	}
+
+	log.Debugf("%s sending %d bytes", p.handler.desc(), len(data))
 
 	var msg Message
 	msg.Session = p.session
@@ -368,7 +377,10 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 		msg.Type = PIPE_OPEN
 		msg.PipeName = p.service
 
-		log.Debugf("%s initialing with encrypted pipe", p.handler.desc())
+		if p.parent != nil {
+			msg.ParentSession = p.parent.session
+			msg.Type = PIPE_OPEN_SUB
+		}
 
 		p.lazy = false
 	} else {
@@ -380,7 +392,7 @@ func (p *Pipe) Send(ctx context.Context, data []byte) error {
 		msg.Type = PIPE_DATA
 	}
 
-	log.Debugf("%s adding %d to unacked", p.handler.desc(), msg.SeqId)
+	log.Debugf("%s adding %d to unacked (type:%s, data:%d)", p.handler.desc(), msg.SeqId, msg.Type, len(data))
 	p.unackedMessages = append(p.unackedMessages, unackedMessage{&msg, time.Now().Add(p.resendInterval)})
 
 	return p.handler.sender.SendData(ctx, p.other, p.handler.peerProto, &msg)
@@ -404,6 +416,10 @@ func (p *Pipe) SendFinal(ctx context.Context, data []byte) error {
 	msg.Session = p.session
 	msg.Data = data
 	msg.SeqId = p.nextSeqId
+
+	if p.parent != nil {
+		msg.ParentSession = p.parent.session
+	}
 
 	p.nextSeqId++
 
@@ -488,4 +504,56 @@ func (p *Pipe) Close(ctx context.Context) error {
 
 func (p *Pipe) blockForAcks() bool {
 	return p.nextSeqId > p.recvThreshold+uint64(p.ackBacklog)
+}
+
+// Opens another pipe within the same session as the current pipe.
+// This makes it easy to establish one pipe, authenticate it, then
+// create sub pipes without having to add yet another multiplexing
+// algorithm to track another data stream.
+func (p *Pipe) OpenSub() (*Pipe, error) {
+	d := p.handler
+
+	d.pipeLock.Lock()
+	defer d.pipeLock.Unlock()
+
+	id := d.sessionId(p.other)
+
+	pipe := &Pipe{
+		other:      p.other,
+		handler:    d,
+		session:    id,
+		service:    p.service,
+		lazy:       true,
+		message:    make(chan pipeMessage, d.PipeBacklog),
+		nextSeqId:  1,
+		ackBacklog: d.AckBacklog,
+		parent:     p,
+	}
+
+	pipe.init()
+
+	d.pipes[mkpipeKey(p.other, id)] = pipe
+
+	return pipe, nil
+}
+
+func (p *Pipe) AcceptSub(ctx context.Context) (*Pipe, error) {
+	p.lock.Lock()
+	if p.newSubPipes == nil {
+		p.newSubPipes = make(chan *Pipe, p.handler.PipeBacklog)
+	}
+	p.lock.Unlock()
+
+	log.Debugf("listening for subpipes: %d", p.session)
+
+	select {
+	case pipe, ok := <-p.newSubPipes:
+		if !ok {
+			return nil, p.err
+		}
+
+		return pipe, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 }
